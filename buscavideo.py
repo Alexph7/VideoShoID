@@ -16,6 +16,7 @@ from telegram.ext import (
 
 # Configurações do bot
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+CHAT_ID = -1001234567890  # ID do grupo ou canal para notificações
 DB_PATH = "produtos.db"
 
 # Estados da conversa de adicionar produto
@@ -76,7 +77,6 @@ async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Por favor, forneça palavras-chave após /buscar."
         )
     keywords = ' '.join(context.args)
-    # consulta síncrona simples (poderia otimizar com to_thread)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     words = keywords.split()
@@ -128,8 +128,15 @@ async def adicionar_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nome = context.user_data['nome']
     try:
         await insert_product(prod_id, nome, url)
+        # Confirmação ao usuário
         await update.message.reply_text(
             f"✅ Produto *{nome}* (ID: {prod_id}) adicionado com sucesso!",
+            parse_mode=constants.ParseMode.MARKDOWN_V2
+        )
+        # Notificação no grupo
+        await context.bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🆕 *Novo produto cadastrado!*\n*ID:* {prod_id}\n*Nome:* {nome}\n*URL:* {url}",
             parse_mode=constants.ParseMode.MARKDOWN_V2
         )
     except sqlite3.IntegrityError:
