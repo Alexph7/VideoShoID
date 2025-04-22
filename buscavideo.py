@@ -6,6 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 # Configurações do bot
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+CHAT_ID = -1001234567890
 DB_PATH = "produtos.db"
 
 # Inicializa logging
@@ -15,9 +16,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Regex para ID no formato GDF-OIU-FGH
+# Regex para ID no formato XXX-XXX-XXX
 ID_PATTERN = re.compile(r'^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$')
-
 
 def init_db():
     """
@@ -37,7 +37,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 def query_by_id(prod_id: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -45,7 +44,6 @@ def query_by_id(prod_id: str):
     result = cursor.fetchone()
     conn.close()
     return result
-
 
 def query_by_name(keywords: str):
     words = keywords.split()
@@ -60,33 +58,34 @@ def query_by_name(keywords: str):
     conn.close()
     return results
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Olá! Envie o ID do produto (formato GDF-OIU-FGH) ou uma palavra-chave para buscar.")
+        "Olá! Envie o ID do produto (formato XXX-XXX-XXX) para verificar se existe. "
+        "Para buscar por palavras-chave, use o comando /buscar seguido das palavras."
+    )
 
+async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        keywords = ' '.join(context.args)
+        results = query_by_name(keywords)
+        if results:
+            replies = [f"*{nome}*\n{url}" for nome, url in results]
+            for reply in replies[:5]:
+                await update.message.reply_text(reply, parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Nenhum produto encontrado para essa busca.")
+    else:
+        await update.message.reply_text("Por favor, forneça palavras-chave após o comando /buscar.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-
-    # Verifica se é ID ou busca por nome
     if ID_PATTERN.match(text):
         res = query_by_id(text)
         if res:
             nome, url = res
             await update.message.reply_text(f"*{nome}*\n{url}", parse_mode="Markdown")
-        else:
-            await update.message.reply_text("❌ Produto não encontrado para esse ID.")
-    else:
-        results = query_by_name(text)
-        if results:
-            replies = [f"*{nome}*\n{url}" for nome, url in results]
-            # Se muitos resultados, limite a, por exemplo, 5 primeiros
-            for reply in replies[:5]:
-                await update.message.reply_text(reply, parse_mode="Markdown")
-        else:
-            await update.message.reply_text("❌ Nenhum produto encontrado para essa busca.")
-
+        # Se não encontrar, não responde nada
+    # Se não for ID, ignora a mensagem
 
 def main():
     # Inicializa o banco
@@ -97,12 +96,12 @@ def main():
 
     # Handlers
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("buscar", buscar))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Inicia o bot
     logger.info("Bot iniciado...")
     app.run_polling()
-
 
 if __name__ == '__main__':
     main()
