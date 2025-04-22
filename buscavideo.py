@@ -1,3 +1,5 @@
+import os
+import sys
 import sqlite3
 import re
 import logging
@@ -15,17 +17,22 @@ from telegram.ext import (
 )
 
 # Configurações do bot
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-CHAT_ID = -1001234567890  # ID do grupo ou canal para notificações
-DB_PATH = "produtos.db"
-ADMIN_PASSWORD = "SUA_SENHA_ADMIN"  # Senha para operações administrativas
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Defina a variável de ambiente TELEGRAM_BOT_TOKEN
+if not BOT_TOKEN:
+    logging.error("Token do bot não definido. Use a variável de ambiente TELEGRAM_BOT_TOKEN.")
+    sys.exit(1)
 
-# States for ConversationHandlers
+CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "-1001234567890"))  # ID do grupo para notificações
+DB_PATH = "produtos.db"
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "SUA_SENHA_ADMIN")  # Defina ADMIN_PASSWORD no .env ou export
+
+# States para ConversationHandlers
 (ADD_PASS, ADD_ID, ADD_NAME, ADD_URL,
  EDIT_PASS, EDIT_ID, EDIT_NAME, EDIT_URL,
  REM_PASS, REM_ID) = range(10)
 
-# Regex para ID no formato XXX-XXX-XXX\ nID_PATTERN = re.compile(r'^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$')
+# Regex para ID no formato XXX-XXX-XXX
+ID_PATTERN = re.compile(r'^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$')
 
 # Setup de logging
 logging.basicConfig(
@@ -34,7 +41,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Banco de dados
+# Inicializa banco de dados
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -54,7 +61,7 @@ def init_db():
 async def run_db(fn, *args):
     return await asyncio.to_thread(fn, *args)
 
-# Funções de DB
+# Operações no DB
 
 def _insert(prod_id, nome, url):
     conn = sqlite3.connect(DB_PATH)
@@ -133,15 +140,15 @@ async def handle_id_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Produto não encontrado.")
 
-# Fluxo adicionar
+# Fluxo adicionar (admin)
 
 async def add_start(update, context):
-    await update.message.reply_text("Informe a senha de admin ou /cancel.")
+    await update.message.reply_text("🔒 Senha de admin:")
     return ADD_PASS
 
 async def add_pass(update, context):
     if update.message.text.strip() != ADMIN_PASSWORD:
-        await update.message.reply_text("❌ Senha incorreta. /cancel para abortar.")
+        await update.message.reply_text("❌ Senha incorreta.")
         return ConversationHandler.END
     await update.message.reply_text("Etapa 1: ID do produto (XXX-XXX-XXX)")
     return ADD_ID
@@ -149,7 +156,8 @@ async def add_pass(update, context):
 async def add_id(update, context):
     pid = update.message.text.strip().upper()
     if not ID_PATTERN.match(pid):
-        return await update.message.reply_text("ID inválido. Tente novamente."), ADD_ID
+        await update.message.reply_text("ID inválido. Tente novamente.")
+        return ADD_ID
     context.user_data['pid'] = pid
     await update.message.reply_text("Etapa 2: Nome do produto")
     return ADD_NAME
@@ -171,10 +179,10 @@ async def add_url(update, context):
         await update.message.reply_text("❌ ID já existe.")
     return ConversationHandler.END
 
-# Fluxo editar
+# Fluxo editar (admin)
 
 async def edit_start(update, context):
-    await update.message.reply_text("Informe a senha de admin ou /cancel.")
+    await update.message.reply_text("🔒 Senha de admin:")
     return EDIT_PASS
 
 async def edit_pass(update, context):
@@ -188,7 +196,8 @@ async def edit_id(update, context):
     pid = update.message.text.strip().upper()
     row = await run_db(_fetch_by_id, pid)
     if not row:
-        return await update.message.reply_text("ID não encontrado."), ConversationHandler.END
+        await update.message.reply_text("ID não encontrado.")
+        return ConversationHandler.END
     context.user_data['pid'] = pid
     await update.message.reply_text(f"Atual: {row[0]} - {row[1]}\nEnvie novo NOME:")
     return EDIT_NAME
@@ -207,10 +216,10 @@ async def edit_url(update, context):
     await context.bot.send_message(CHAT_ID, f"Editado: {pid} - {pname} - {url}")
     return ConversationHandler.END
 
-# Fluxo remover
+# Fluxo remover (admin)
 
 async def rem_start(update, context):
-    await update.message.reply_text("Informe a senha de admin ou /cancel.")
+    await update.message.reply_text("🔒 Senha de admin:")
     return REM_PASS
 
 async def rem_pass(update, context):
@@ -224,7 +233,8 @@ async def rem_id(update, context):
     pid = update.message.text.strip().upper()
     row = await run_db(_fetch_by_id, pid)
     if not row:
-        return await update.message.reply_text("ID não encontrado."), ConversationHandler.END
+        await update.message.reply_text("ID não encontrado.")
+        return ConversationHandler.END
     await run_db(_delete, pid)
     await update.message.reply_text(f"✅ Produto {pid} removido.")
     await context.bot.send_message(CHAT_ID, f"Removido: {pid} - {row[0]}")
@@ -235,7 +245,7 @@ async def cancel(update, context):
     return ConversationHandler.END
 
 async def error_handler(update, context):
-    logger.error("Erro:" , exc_info=context.error)
+    logger.error("Erro:", exc_info=context.error)
 
 
 def main():
@@ -245,24 +255,24 @@ def main():
     # Conversas admin
     add_conv = ConversationHandler(
         entry_points=[CommandHandler('adicionar', add_start)],
-        states={ADD_PASS:[MessageHandler(filters.TEXT, add_pass)],
-                ADD_ID:[MessageHandler(filters.TEXT, add_id)],
-                ADD_NAME:[MessageHandler(filters.TEXT, add_name)],
-                ADD_URL:[MessageHandler(filters.TEXT, add_url)]},
+        states={ADD_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_pass)],
+                ADD_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, add_id)],
+                ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
+                ADD_URL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, add_url)]},
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     edit_conv = ConversationHandler(
         entry_points=[CommandHandler('editar', edit_start)],
-        states={EDIT_PASS:[MessageHandler(filters.TEXT, edit_pass)],
-                EDIT_ID:[MessageHandler(filters.TEXT, edit_id)],
-                EDIT_NAME:[MessageHandler(filters.TEXT, edit_name)],
-                EDIT_URL:[MessageHandler(filters.TEXT, edit_url)]},
+        states={EDIT_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_pass)],
+                EDIT_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_id)],
+                EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_name)],
+                EDIT_URL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_url)]},
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     rem_conv = ConversationHandler(
         entry_points=[CommandHandler('remover', rem_start)],
-        states={REM_PASS:[MessageHandler(filters.TEXT, rem_pass)],
-                REM_ID:[MessageHandler(filters.TEXT, rem_id)]},
+        states={REM_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_pass)],
+                REM_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_id)]},
         fallbacks=[CommandHandler('cancel', cancel)]
     )
 
@@ -277,7 +287,9 @@ def main():
     app.add_handler(rem_conv)
 
     app.add_error_handler(error_handler)
+    logger.info("Bot iniciado...")
     app.run_polling()
+
 
 if __name__ == '__main__':
     main()
