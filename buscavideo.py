@@ -4,15 +4,13 @@ import sqlite3
 import re
 import logging
 import asyncio
-from telegram import Update, constants
+from telegram import Update, constants, ReplyKeyboardMarkup, BotCommand, MenuButtonCommands
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     ContextTypes,
     filters,
-    CallbackContext,
-    Application,
     ConversationHandler,
 )
 
@@ -42,7 +40,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Inicializa banco de dados
-
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -58,15 +55,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-async def run_db(fn, *args):
-    return await asyncio.to_thread(fn, *args)
+# Executa funções de banco de forma assíncrona
+def run_db(fn, *args):
+    return asyncio.to_thread(fn, *args)
 
 # Operações no DB
-
 def _insert(prod_id, nome, url):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("INSERT INTO produtos (id,nome,url) VALUES (?,?,?)", (prod_id,nome,url))
+    cur.execute("INSERT INTO produtos (id,nome,url) VALUES (?,?,?)", (prod_id, nome, url))
     conn.commit()
     conn.close()
 
@@ -74,7 +71,7 @@ def _insert(prod_id, nome, url):
 def _update(prod_id, nome, url):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("UPDATE produtos SET nome=?,url=? WHERE id=?", (nome,url,prod_id))
+    cur.execute("UPDATE produtos SET nome=?,url=? WHERE id=?", (nome, url, prod_id))
     conn.commit()
     conn.close()
 
@@ -90,7 +87,7 @@ def _delete(prod_id):
 def _fetch_by_id(prod_id):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT nome,url FROM produtos WHERE id=?", (prod_id,))
+    cur.execute("SELECT nome, url FROM produtos WHERE id=?", (prod_id,))
     res = cur.fetchone()
     conn.close()
     return res
@@ -100,25 +97,27 @@ def _search(keywords):
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
     parts = keywords.split()
-    sql = "SELECT nome,url FROM produtos WHERE " + " AND ".join(["nome LIKE '%'||?||'%'" for _ in parts])
+    sql = "SELECT nome, url FROM produtos WHERE " + " AND ".join(["nome LIKE '%'||?||'%'" for _ in parts])
     cur.execute(sql, parts)
     res = cur.fetchall()
     conn.close()
     return res
 
 # Handlers comuns
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    menu = (
-        "Digite o ID do produto (XXX-XXX-XXX) para consulta direta ou use /buscar <palavras-chave>\n\n"
-        "📋 *Menu*: \n"
-        "• Consulta por ID\n"
-        "• /buscar <palavras-chave>\n"
-        "• /adicionar (admin)\n"
-        "• /editar (admin)\n"
-        "• /remover (admin)"
+    keyboard = [
+        ['Consulta por ID'],
+        ['/buscar', '/adicionar'],
+        ['/editar', '/remover']
+    ]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    texto = (
+        "📋 *Menu Bot de Produtos* 📋\n\n"
+        "• Digite o ID (XXX-XXX-XXX) diretamente para consulta.\n"
+        "• /buscar <palavras-chave> para pesquisar.\n"
+        "• Comandos admin: /adicionar, /editar, /remover"
     )
-    await update.message.reply_text(menu, parse_mode=constants.ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(texto, parse_mode=constants.ParseMode.MARKDOWN_V2, reply_markup=markup)
 
 async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -141,7 +140,6 @@ async def handle_id_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Produto não encontrado.")
 
 # Fluxo adicionar (admin)
-
 async def add_start(update, context):
     await update.message.reply_text("🔒 Senha de admin:")
     return ADD_PASS
@@ -180,7 +178,6 @@ async def add_url(update, context):
     return ConversationHandler.END
 
 # Fluxo editar (admin)
-
 async def edit_start(update, context):
     await update.message.reply_text("🔒 Senha de admin:")
     return EDIT_PASS
@@ -217,7 +214,6 @@ async def edit_url(update, context):
     return ConversationHandler.END
 
 # Fluxo remover (admin)
-
 async def rem_start(update, context):
     await update.message.reply_text("🔒 Senha de admin:")
     return REM_PASS
@@ -247,49 +243,66 @@ async def cancel(update, context):
 async def error_handler(update, context):
     logger.error("Erro:", exc_info=context.error)
 
+# Setup do menu sanduíche
+async def setup_menu(application):
+    commands = [
+        BotCommand("buscar", "Buscar produtos"),
+        BotCommand("adicionar", "Adicionar produto (admin)"),
+        BotCommand("editar", "Editar produto (admin)"),
+        BotCommand("remover", "Remover produto (admin)")
+    ]
+    await application.bot.set_my_commands(commands)
+    await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
 
 def main():
     init_db()
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder()  \
+        .token(BOT_TOKEN)     \
+        .post_init(setup_menu) \
+        .build()
 
-    # Conversas admin
-    add_conv = ConversationHandler(
-        entry_points=[CommandHandler('adicionar', add_start)],
-        states={ADD_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_pass)],
-                ADD_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, add_id)],
-                ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
-                ADD_URL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, add_url)]},
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    edit_conv = ConversationHandler(
-        entry_points=[CommandHandler('editar', edit_start)],
-        states={EDIT_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_pass)],
-                EDIT_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_id)],
-                EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_name)],
-                EDIT_URL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_url)]},
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    rem_conv = ConversationHandler(
-        entry_points=[CommandHandler('remover', rem_start)],
-        states={REM_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_pass)],
-                REM_ID:   [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_id)]},
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-
-    # Handlers comuns
+    # Registra handlers
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('buscar', buscar))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_id_query))
 
-    # Admin handlers
+    add_conv = ConversationHandler(
+        entry_points=[CommandHandler('adicionar', add_start)],
+        states={
+            ADD_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_pass)],
+            ADD_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_id)],
+            ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_name)],
+            ADD_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_url)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    edit_conv = ConversationHandler(
+        entry_points=[CommandHandler('editar', edit_start)],
+        states={
+            EDIT_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_pass)],
+            EDIT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_id)],
+            EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_name)],
+            EDIT_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_url)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    rem_conv = ConversationHandler(
+        entry_points=[CommandHandler('remover', rem_start)],
+        states={
+            REM_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_pass)],
+            REM_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, rem_id)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+
     app.add_handler(add_conv)
     app.add_handler(edit_conv)
     app.add_handler(rem_conv)
 
     app.add_error_handler(error_handler)
-    logger.info("Bot iniciado...")
+    logger.info("Bot iniciado com menu customizado e menu sanduíche configurado...")
     app.run_polling()
-
 
 if __name__ == '__main__':
     main()
