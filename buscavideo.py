@@ -18,25 +18,25 @@ from telegram.ext import (
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 CHAT_ID = -1001234567890  # ID do grupo ou canal para notificações
 DB_PATH = "produtos.db"
+ADMIN_PASSWORD = "SUA_SENHA_ADMIN"  # Senha para operações administrativas
 
-# Estados da conversa de adicionar produto
-ID, NAME, URL = range(3)
+# States for ConversationHandlers
+(ADD_PASS, ADD_ID, ADD_NAME, ADD_URL,
+ EDIT_PASS, EDIT_ID, EDIT_NAME, EDIT_URL,
+ REM_PASS, REM_ID) = range(10)
 
-# Inicializa logging
+# Regex para ID no formato XXX-XXX-XXX\ nID_PATTERN = re.compile(r'^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$')
+
+# Setup de logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Regex para ID no formato XXX-XXX-XXX
-ID_PATTERN = re.compile(r'^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$')
-
+# Banco de dados
 
 def init_db():
-    """
-    Cria a tabela de produtos se não existir.
-    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
@@ -51,137 +51,232 @@ def init_db():
     conn.commit()
     conn.close()
 
+async def run_db(fn, *args):
+    return await asyncio.to_thread(fn, *args)
 
-def _insert_product(prod_id: str, nome: str, url: str):
+# Funções de DB
+
+def _insert(prod_id, nome, url):
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO produtos (id, nome, url) VALUES (?, ?, ?)",
-        (prod_id, nome, url)
-    )
+    cur = conn.cursor()
+    cur.execute("INSERT INTO produtos (id,nome,url) VALUES (?,?,?)", (prod_id,nome,url))
     conn.commit()
     conn.close()
 
-async def insert_product(prod_id: str, nome: str, url: str):
-    return await asyncio.to_thread(_insert_product, prod_id, nome, url)
+
+def _update(prod_id, nome, url):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("UPDATE produtos SET nome=?,url=? WHERE id=?", (nome,url,prod_id))
+    conn.commit()
+    conn.close()
+
+
+def _delete(prod_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM produtos WHERE id=?", (prod_id,))
+    conn.commit()
+    conn.close()
+
+
+def _fetch_by_id(prod_id):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT nome,url FROM produtos WHERE id=?", (prod_id,))
+    res = cur.fetchone()
+    conn.close()
+    return res
+
+
+def _search(keywords):
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    parts = keywords.split()
+    sql = "SELECT nome,url FROM produtos WHERE " + " AND ".join(["nome LIKE '%'||?||'%'" for _ in parts])
+    cur.execute(sql, parts)
+    res = cur.fetchall()
+    conn.close()
+    return res
+
+# Handlers comuns
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Olá! Use /adicionar para incluir um novo produto em etapas, ou /buscar para pesquisar.\n"
-        "Envie /cancel para cancelar qualquer ação."
+    menu = (
+        "Digite o ID do produto (XXX-XXX-XXX) para consulta direta ou use /buscar <palavras-chave>\n\n"
+        "📋 *Menu*: \n"
+        "• Consulta por ID\n"
+        "• /buscar <palavras-chave>\n"
+        "• /adicionar (admin)\n"
+        "• /editar (admin)\n"
+        "• /remover (admin)"
     )
+    await update.message.reply_text(menu, parse_mode=constants.ParseMode.MARKDOWN_V2)
 
 async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        return await update.message.reply_text(
-            "Por favor, forneça palavras-chave após /buscar."
-        )
-    keywords = ' '.join(context.args)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    words = keywords.split()
-    sql = ("SELECT nome, url FROM produtos WHERE " +
-           " AND ".join(["nome LIKE '%' || ? || '%'" for _ in words]))
-    cursor.execute(sql, words)
-    results = cursor.fetchall()
-    conn.close()
-
-    if results:
-        for nome, url in results[:5]:
-            await update.message.reply_text(
-                f"*{nome}*\n{url}",
-                parse_mode=constants.ParseMode.MARKDOWN_V2
-            )
+        return await update.message.reply_text("Use: /buscar <palavras-chave>")
+    rows = await run_db(_search, ' '.join(context.args))
+    if rows:
+        for nome, url in rows[:5]:
+            await update.message.reply_text(f"*{nome}*\n{url}", parse_mode=constants.ParseMode.MARKDOWN_V2)
     else:
         await update.message.reply_text("❌ Nenhum produto encontrado.")
 
-async def adicionar_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Etapa 1/3: Por favor, envie o ID do produto (formato XXX-XXX-XXX) ou /cancel para sair."
-    )
-    return ID
+async def handle_id_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().upper()
+    if ID_PATTERN.match(text):
+        res = await run_db(_fetch_by_id, text)
+        if res:
+            nome, url = res
+            await update.message.reply_text(f"*{nome}*\n{url}", parse_mode=constants.ParseMode.MARKDOWN_V2)
+        else:
+            await update.message.reply_text("❌ Produto não encontrado.")
 
-async def adicionar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    prod_id = update.message.text.strip().upper()
-    if not ID_PATTERN.match(prod_id):
-        await update.message.reply_text(
-            "❌ ID inválido. Deve ser no formato XXX-XXX-XXX. Tente novamente ou /cancel."
-        )
-        return ID
-    context.user_data['prod_id'] = prod_id
-    await update.message.reply_text(
-        "Etapa 2/3: Agora envie o NOME do produto ou /cancel."
-    )
-    return NAME
+# Fluxo adicionar
 
-async def adicionar_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    nome = update.message.text.strip()
-    context.user_data['nome'] = nome
-    await update.message.reply_text(
-        "Etapa 3/3: Por fim, envie a URL do produto ou /cancel."
-    )
-    return URL
+async def add_start(update, context):
+    await update.message.reply_text("Informe a senha de admin ou /cancel.")
+    return ADD_PASS
 
-async def adicionar_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_pass(update, context):
+    if update.message.text.strip() != ADMIN_PASSWORD:
+        await update.message.reply_text("❌ Senha incorreta. /cancel para abortar.")
+        return ConversationHandler.END
+    await update.message.reply_text("Etapa 1: ID do produto (XXX-XXX-XXX)")
+    return ADD_ID
+
+async def add_id(update, context):
+    pid = update.message.text.strip().upper()
+    if not ID_PATTERN.match(pid):
+        return await update.message.reply_text("ID inválido. Tente novamente."), ADD_ID
+    context.user_data['pid'] = pid
+    await update.message.reply_text("Etapa 2: Nome do produto")
+    return ADD_NAME
+
+async def add_name(update, context):
+    context.user_data['pname'] = update.message.text.strip()
+    await update.message.reply_text("Etapa 3: URL do produto")
+    return ADD_URL
+
+async def add_url(update, context):
     url = update.message.text.strip()
-    prod_id = context.user_data['prod_id']
-    nome = context.user_data['nome']
+    pid = context.user_data['pid']
+    pname = context.user_data['pname']
     try:
-        await insert_product(prod_id, nome, url)
-        # Confirmação ao usuário
-        await update.message.reply_text(
-            f"✅ Produto *{nome}* (ID: {prod_id}) adicionado com sucesso!",
-            parse_mode=constants.ParseMode.MARKDOWN_V2
-        )
-        # Notificação no grupo
-        await context.bot.send_message(
-            chat_id=CHAT_ID,
-            text=f"🆕 *Novo produto cadastrado!*\n*ID:* {prod_id}\n*Nome:* {nome}\n*URL:* {url}",
-            parse_mode=constants.ParseMode.MARKDOWN_V2
-        )
+        await run_db(_insert, pid, pname, url)
+        await update.message.reply_text(f"✅ Produto {pname} adicionado.")
+        await context.bot.send_message(CHAT_ID, f"Novo produto: {pid} - {pname} - {url}")
     except sqlite3.IntegrityError:
-        await update.message.reply_text(
-            "❌ Já existe um produto com esse ID. Operação cancelada."
-        )
-    except Exception as e:
-        logger.error("Erro ao inserir produto: %s", e)
-        await update.message.reply_text(
-            "❌ Erro ao adicionar produto."
-        )
+        await update.message.reply_text("❌ ID já existe.")
     return ConversationHandler.END
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "❌ Operação cancelada.",
-        parse_mode=constants.ParseMode.MARKDOWN
-    )
+# Fluxo editar
+
+async def edit_start(update, context):
+    await update.message.reply_text("Informe a senha de admin ou /cancel.")
+    return EDIT_PASS
+
+async def edit_pass(update, context):
+    if update.message.text.strip() != ADMIN_PASSWORD:
+        await update.message.reply_text("❌ Senha incorreta.")
+        return ConversationHandler.END
+    await update.message.reply_text("Etapa 1: ID do produto a editar")
+    return EDIT_ID
+
+async def edit_id(update, context):
+    pid = update.message.text.strip().upper()
+    row = await run_db(_fetch_by_id, pid)
+    if not row:
+        return await update.message.reply_text("ID não encontrado."), ConversationHandler.END
+    context.user_data['pid'] = pid
+    await update.message.reply_text(f"Atual: {row[0]} - {row[1]}\nEnvie novo NOME:")
+    return EDIT_NAME
+
+async def edit_name(update, context):
+    context.user_data['pname'] = update.message.text.strip()
+    await update.message.reply_text("Envie nova URL:")
+    return EDIT_URL
+
+async def edit_url(update, context):
+    url = update.message.text.strip()
+    pid = context.user_data['pid']
+    pname = context.user_data['pname']
+    await run_db(_update, pid, pname, url)
+    await update.message.reply_text(f"✅ Produto {pid} atualizado.")
+    await context.bot.send_message(CHAT_ID, f"Editado: {pid} - {pname} - {url}")
     return ConversationHandler.END
 
-async def error_handler(update: object, context: CallbackContext):
-    logger.error("Exception durante o processamento:", exc_info=context.error)
+# Fluxo remover
+
+async def rem_start(update, context):
+    await update.message.reply_text("Informe a senha de admin ou /cancel.")
+    return REM_PASS
+
+async def rem_pass(update, context):
+    if update.message.text.strip() != ADMIN_PASSWORD:
+        await update.message.reply_text("❌ Senha incorreta.")
+        return ConversationHandler.END
+    await update.message.reply_text("Envie o ID do produto a remover")
+    return REM_ID
+
+async def rem_id(update, context):
+    pid = update.message.text.strip().upper()
+    row = await run_db(_fetch_by_id, pid)
+    if not row:
+        return await update.message.reply_text("ID não encontrado."), ConversationHandler.END
+    await run_db(_delete, pid)
+    await update.message.reply_text(f"✅ Produto {pid} removido.")
+    await context.bot.send_message(CHAT_ID, f"Removido: {pid} - {row[0]}")
+    return ConversationHandler.END
+
+async def cancel(update, context):
+    await update.message.reply_text("❌ Operação cancelada.")
+    return ConversationHandler.END
+
+async def error_handler(update, context):
+    logger.error("Erro:" , exc_info=context.error)
 
 
 def main():
     init_db()
-    app: Application = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('adicionar', adicionar_start)],
-        states={
-            ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, adicionar_id)],
-            NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adicionar_name)],
-            URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, adicionar_url)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-        allow_reentry=True,
+    # Conversas admin
+    add_conv = ConversationHandler(
+        entry_points=[CommandHandler('adicionar', add_start)],
+        states={ADD_PASS:[MessageHandler(filters.TEXT, add_pass)],
+                ADD_ID:[MessageHandler(filters.TEXT, add_id)],
+                ADD_NAME:[MessageHandler(filters.TEXT, add_name)],
+                ADD_URL:[MessageHandler(filters.TEXT, add_url)]},
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    edit_conv = ConversationHandler(
+        entry_points=[CommandHandler('editar', edit_start)],
+        states={EDIT_PASS:[MessageHandler(filters.TEXT, edit_pass)],
+                EDIT_ID:[MessageHandler(filters.TEXT, edit_id)],
+                EDIT_NAME:[MessageHandler(filters.TEXT, edit_name)],
+                EDIT_URL:[MessageHandler(filters.TEXT, edit_url)]},
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    rem_conv = ConversationHandler(
+        entry_points=[CommandHandler('remover', rem_start)],
+        states={REM_PASS:[MessageHandler(filters.TEXT, rem_pass)],
+                REM_ID:[MessageHandler(filters.TEXT, rem_id)]},
+        fallbacks=[CommandHandler('cancel', cancel)]
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("buscar", buscar))
-    app.add_handler(conv_handler)
-    app.add_error_handler(error_handler)
+    # Handlers comuns
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler('buscar', buscar))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_id_query))
 
-    logger.info("Bot iniciado...")
+    # Admin handlers
+    app.add_handler(add_conv)
+    app.add_handler(edit_conv)
+    app.add_handler(rem_conv)
+
+    app.add_error_handler(error_handler)
     app.run_polling()
 
 if __name__ == '__main__':
