@@ -1,12 +1,15 @@
 import sqlite3
 import re
 import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import asyncio
+from telegram import Update, constants
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackContext, Application,
+)
 
 # Configurações do bot
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-CHAT_ID = -1001234567890
+CHAT_ID = -1001234567890  # ID do chat para notificações, se necessário
 DB_PATH = "produtos.db"
 
 # Inicializa logging
@@ -18,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Regex para ID no formato XXX-XXX-XXX
 ID_PATTERN = re.compile(r'^[A-Z0-9]{3}-[A-Z0-9]{3}-[A-Z0-9]{3}$')
+
 
 def init_db():
     """
@@ -37,7 +41,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-def query_by_id(prod_id: str):
+
+def _query_by_id(prod_id: str):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT nome, url FROM produtos WHERE id = ?", (prod_id,))
@@ -45,63 +50,97 @@ def query_by_id(prod_id: str):
     conn.close()
     return result
 
-def query_by_name(keywords: str):
+
+def _query_by_name(keywords: str):
     words = keywords.split()
-    sql = "SELECT nome, url FROM produtos WHERE " + " AND ".join(
-        ["nome LIKE '%' || ? || '%'" for _ in words]
-    )
-    params = words
+    sql = ("SELECT nome, url FROM produtos WHERE " +
+           " AND ".join(["nome LIKE '%' || ? || '%'" for _ in words]))
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute(sql, params)
+    cursor.execute(sql, words)
     results = cursor.fetchall()
     conn.close()
     return results
 
+
+async def query_by_id(prod_id: str):
+    # Executa operação de I/O em thread separado
+    return await asyncio.to_thread(_query_by_id, prod_id)
+
+
+async def query_by_name(keywords: str):
+    return await asyncio.to_thread(_query_by_name, keywords)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Olá! Envie o ID do produto (formato XXX-XXX-XXX) para verificar se existe. "
-        "Para buscar por palavras-chave, use o comando /buscar seguido das palavras."
+        "Para buscar por palavras-chave, use: /buscar <palavras-chave>."
     )
 
+
 async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args:
-        keywords = ' '.join(context.args)
-        results = query_by_name(keywords)
-        if results:
-            replies = [f"*{nome}*\n{url}" for nome, url in results]
-            for reply in replies[:5]:
-                await update.message.reply_text(reply, parse_mode="Markdown")
-        else:
-            await update.message.reply_text("❌ Nenhum produto encontrado para essa busca.")
+    if not context.args:
+        return await update.message.reply_text(
+            "Por favor, forneça palavras-chave após o comando /buscar."
+        )
+
+    keywords = ' '.join(context.args)
+    results = await query_by_name(keywords)
+    if results:
+        for nome, url in results[:5]:
+            await update.message.reply_text(
+                f"*{nome}*\n{url}",
+                parse_mode=constants.ParseMode.MARKDOWN_V2
+            )
     else:
-        await update.message.reply_text("Por favor, forneça palavras-chave após o comando /buscar.")
+        await update.message.reply_text(
+            "❌ Nenhum produto encontrado para essa busca."
+        )
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
+    text = update.message.text.strip().upper()
     if ID_PATTERN.match(text):
-        res = query_by_id(text)
+        res = await query_by_id(text)
         if res:
             nome, url = res
-            await update.message.reply_text(f"*{nome}*\n{url}", parse_mode="Markdown")
-        # Se não encontrar, não responde nada
-    # Se não for ID, ignora a mensagem
+            await update.message.reply_text(
+                f"*{nome}*\n{url}",
+                parse_mode=constants.ParseMode.MARKDOWN_V2
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Produto não encontrado com esse ID."
+            )
+    else:
+        # Opcional: ignora ou instrui usuário
+        logger.debug(f"Mensagem ignorada (não é ID): {text}")
+
+
+def error_handler(update: object, context: CallbackContext):
+    logger.error(
+        msg="Exception while handling an update:",
+        exc_info=context.error
+    )
+
 
 def main():
-    # Inicializa o banco
     init_db()
 
-    # Cria a aplicação do Telegram
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app: Application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("buscar", buscar))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+    )
+    app.add_error_handler(error_handler)
 
-    # Inicia o bot
     logger.info("Bot iniciado...")
     app.run_polling()
+
 
 if __name__ == '__main__':
     main()
