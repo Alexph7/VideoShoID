@@ -25,6 +25,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔎 Digite o ID do produto no formato ABC-12G-DX3 ou use /buscar para procurar por nome."
     )
 
+
 # Função que roda depois que o bot conecta, para ajustar a descrição
 async def setup_bot_description(app):
     # descrição curta (topo da conversa)
@@ -39,11 +40,12 @@ async def setup_bot_description(app):
     await app.bot.set_my_description(
         description=(
             "🤖 Olá! Sou o bot do @cupomnavitrine – "
-            "vou te ajudar a buscar vídeos da shopee pra você por IDs. Se não existir ainda, "
-            "coloco na fila e aviso quando estiver disponível. 👌"
+            "vou te ajudar a buscar vídeos da shopee pra você por IDs. "
+            "Se não existir ainda, coloco na fila e aviso quando estiver disponível. 👌"
         ),
         language_code="pt"
     )
+
 
 def main():
     app = (
