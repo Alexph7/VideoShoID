@@ -25,7 +25,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔎 Digite o ID do produto no formato ABC-12G-DX3 ou use /buscar para procurar por nome."
     )
 
-
 # Função que roda depois que o bot conecta, para ajustar a descrição
 async def setup_bot_description(app):
     # descrição curta (topo da conversa)
