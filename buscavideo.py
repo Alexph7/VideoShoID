@@ -4,6 +4,7 @@ import sqlite3
 import re
 import logging
 import asyncio
+from datetime import datetime
 from telegram import Update, constants, ReplyKeyboardMarkup, BotCommand, MenuButtonCommands, BotCommandScopeDefault, BotCommandScopeChatMember
 from telegram.ext import (
     ApplicationBuilder,
@@ -27,7 +28,7 @@ if not BOT_TOKEN:
 # IDs e senhas
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "SUA_SENHA_ADMIN")
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", "0"))           # usuário que recebe os comandos admin
-ADMIN_GROUP_ID = int(os.getenv("ADMIN_GROUP_ID", "0"))         # grupo de notificação aos admins
+ADMIN_GROUP_ID = -1002563145936        # grupo de notificação aos admins
 
 # Banco de dados
 DB_PATH = "videos.db"
@@ -41,13 +42,22 @@ def init_db():
             id TEXT PRIMARY KEY,
             link TEXT
         )''')
+    # nova tabela para registrar a fila de pedidos
+    cur.execute(
+        '''CREATE TABLE IF NOT EXISTS request_log (
+            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+            vid TEXT,
+            user TEXT,
+            ts DATETIME DEFAULT CURRENT_TIMESTAMP
+        )''')
     conn.commit()
     conn.close()
 
 async def run_db(fn, *args):
     return await asyncio.to_thread(fn, *args)
 
-# Operações DB com tratamento de erros
+# Operações DB
+
 def _insert(id, link=None):
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -56,6 +66,19 @@ def _insert(id, link=None):
         conn.commit()
     except Exception as e:
         logger.error(f"Erro ao inserir no banco: {e}")
+    finally:
+        conn.close()
+
+# registra cada pedido no request_log
+
+def _log_request(vid, user):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("INSERT INTO request_log(vid, user) VALUES(?,?)", (vid, user))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Erro ao logar pedido: {e}")
     finally:
         conn.close()
 
@@ -73,6 +96,21 @@ def _fetch_by_id(id):
     finally:
         conn.close()
 
+# buscar fila de pedidos pendentes (sem link)
+def _fetch_queue():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        '''SELECT r.vid, r.user, r.ts
+           FROM request_log r
+           LEFT JOIN videos v ON r.vid = v.id
+           WHERE v.link IS NULL
+           ORDER BY r.ts'''
+    )
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
 # Regex para padrão ID (11 chars, duas hyphens)
 ID_PATTERN = re.compile(r'^[A-Za-z0-9]{3}-[A-Za-z0-9]{3}-[A-Za-z0-9]{3}$')
 
@@ -85,6 +123,7 @@ ADMIN_COMMANDS = USER_COMMANDS + [
     BotCommand("adicionar", "Adicionar link de vídeo"),
     BotCommand("editar", "Editar link existente"),
     BotCommand("remover", "Remover vídeo"),
+    BotCommand("fila", "Mostrar fila de pedidos"),  # novo comando
 ]
 
 # Estados conversas
@@ -105,21 +144,23 @@ async def handle_id_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     vid = text
     link = await run_db(_fetch_by_id, vid)
+    user = update.effective_user
+    name = user.username or user.first_name
+
     if link:
         await update.message.reply_text(f"🔗 Link: {link}")
     else:
+        # registra e loga pedido
         await run_db(_insert, vid)
+        await run_db(_log_request, vid, name)
         await update.message.reply_text("✅ ID registrado! O link estará disponível em breve.")
         if ADMIN_GROUP_ID:
-            user = update.effective_user
-            name = user.username or user.first_name
             msg = f"Usuário {name} pediu vídeo com o ID {vid}."
             await context.bot.send_message(ADMIN_GROUP_ID, msg)
 
 # Handlers público
 @clear_data
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # teclado com comandos lowercase
     keyboard = [["/buscarid"], ["/buscarpalavra"], ["/cancel"]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -159,7 +200,6 @@ async def menu_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return MENU
 
 async def entry_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     await update.message.reply_text("🚧 Esta funcionalidade ainda não está disponível.")
     return MENU
 
@@ -169,16 +209,32 @@ async def entry_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ID inválido. Formato ABC-123-2DS.")
         return ENTRY_ID
     link = await run_db(_fetch_by_id, vid)
+    user = update.effective_user
+    name = user.username or user.first_name
+
     if link:
         await update.message.reply_text(f"🔗 Link: {link}")
     else:
+        await run_db(_insert, vid)
+        await run_db(_log_request, vid, name)
         await update.message.reply_text("✅ ID registrado! O link estará disponível em breve.")
         if ADMIN_GROUP_ID:
-            user = update.effective_user
-            name = user.username or user.first_name
             msg = f"Usuário {name} pediu vídeo com o ID {vid}."
             await context.bot.send_message(ADMIN_GROUP_ID, msg)
     return MENU
+
+# Novo handler para comando /fila
+async def list_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    rows = await run_db(_fetch_queue)
+    if not rows:
+        await update.message.reply_text("📭 Não há pedidos pendentes.")
+    else:
+        text = "📋 Fila de pedidos (sem link):\n"
+        for vid, user, ts in rows:
+            ts_fmt = datetime.fromisoformat(ts).strftime("%d/%m %H:%M")
+            text += f"• {ts_fmt} - {user}: {vid}\n"
+        await update.message.reply_text(text)
+    return ADMIN_ACTION
 
 # Handlers admin
 @clear_data
@@ -190,7 +246,7 @@ async def admin_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() != ADMIN_PASSWORD:
         await update.message.reply_text("❌ Senha incorreta. Tente novamente.")
         return ADMIN_PASS
-    keyboard = [["/adicionar"], ["/editar"], ["/remover"], ["/logout"]]
+    keyboard = [["/adicionar"], ["/editar"], ["/remover"], ["/fila"], ["/logout"]]
     markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("✅ Acesso Admin liberado!", reply_markup=markup)
     await context.bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChatMember(chat_id=update.effective_chat.id, user_id=update.effective_user.id))
@@ -199,14 +255,13 @@ async def admin_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = update.message.text.strip().lower()
     if action == "/adicionar":
-        await update.message.reply_text("📥 Digite o ID para adicionar link:")
-        return ADD_ID
+        return await add_id(update, context)
     if action == "/editar":
-        await update.message.reply_text("✏️ Digite o ID para editar:")
-        return EDIT_ID
+        return await edit_id(update, context)
     if action == "/remover":
-        await update.message.reply_text("🗑️ Digite o ID para remover:")
-        return REM_ID
+        return await rem_id(update, context)
+    if action == "/fila":
+        return await list_queue(update, context)
     if action == "/logout":
         await context.bot.set_my_commands(USER_COMMANDS, scope=BotCommandScopeChatMember(chat_id=update.effective_chat.id, user_id=update.effective_user.id))
         await update.message.reply_text("🔄 Saindo do modo Admin.")
