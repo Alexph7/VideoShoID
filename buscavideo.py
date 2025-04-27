@@ -215,8 +215,11 @@ async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["is_admin"] = True
         texto = (
             "🔧 *Menu Avançado* 🔧\n\n"
-            "/fila - Listar pedidos pendentes\n"
+            "/fila-pendentes - Listar pedidos pendentes\n"
             "/adicionar - adicionar produtos\n"
+            "/historico - Ver todos os pedidos\n"
+            "/concluidos - Ver apenas pedidos concluídos\n"
+            "/rejeitados - Ver apenas pedidos rejeitados\n"
         )
         await update.message.reply_text(texto, parse_mode="Markdown")
         return MENU_ADMIN
@@ -247,6 +250,77 @@ async def mostrar_fila(update: Update, context: ContextTypes.DEFAULT_TYPE):
         resposta += f"*{i}.* 👤 {username} (`{user_id}`)\n"
         resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}` — 📄 *{status}*\n\n"
     await update.message.reply_text(resposta, parse_mode="Markdown")
+
+
+# Mostrar histórico completo
+async def mostrar_historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("is_admin"):
+        await update.message.reply_text("❌ Você não tem permissão.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, username, video_id, requested_at, status FROM pending_requests ORDER BY requested_at ASC")
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text("📭 Nenhum pedido encontrado!")
+        return
+
+    resposta = "📚 *Histórico de todos os pedidos:*\n\n"
+    for i, (user_id, username, video_id, requested_at, status) in enumerate(rows, 1):
+        resposta += f"*{i}.* 👤 {username} (`{user_id}`)\n"
+        resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}` — 📄 *{status}*\n\n"
+
+    await update.message.reply_text(resposta, parse_mode="Markdown")
+
+# Mostrar apenas pedidos concluídos
+async def mostrar_concluidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("is_admin"):
+        await update.message.reply_text("❌ Você não tem permissão.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, username, video_id, requested_at FROM pending_requests WHERE status = 'concluido' ORDER BY requested_at ASC")
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text("📭 Nenhum pedido concluído!")
+        return
+
+    resposta = "✅ *Pedidos concluídos:*\n\n"
+    for i, (user_id, username, video_id, requested_at) in enumerate(rows, 1):
+        resposta += f"*{i}.* 👤 {username} (`{user_id}`)\n"
+        resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}`\n\n"
+
+    await update.message.reply_text(resposta, parse_mode="Markdown")
+
+# Mostrar apenas pedidos rejeitados
+async def mostrar_rejeitados(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("is_admin"):
+        await update.message.reply_text("❌ Você não tem permissão.")
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, username, video_id, requested_at FROM pending_requests WHERE status = 'rejeitado' ORDER BY requested_at ASC")
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        await update.message.reply_text("📭 Nenhum pedido rejeitado!")
+        return
+
+    resposta = "❌ *Pedidos rejeitados:*\n\n"
+    for i, (user_id, username, video_id, requested_at) in enumerate(rows, 1):
+        resposta += f"*{i}.* 👤 {username} (`{user_id}`)\n"
+        resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}`\n\n"
+
+    await update.message.reply_text(resposta, parse_mode="Markdown")
+
 
 # ————— Cancelar conversa —————
 async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -328,6 +402,9 @@ if __name__ == "__main__":
             MENU_ADMIN: [
                 CommandHandler("fila", mostrar_fila),
                 CommandHandler("adicionar", iniciar_adicionar),
+                CommandHandler("historico", mostrar_historico),
+                CommandHandler("concluidos", mostrar_concluidos),
+                CommandHandler("rejeitados", mostrar_rejeitados),
                 CommandHandler("avancado", iniciar_avancado),
                 MessageHandler(filters.COMMAND, cancelar),
             ],
