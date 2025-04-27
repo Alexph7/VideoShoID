@@ -234,7 +234,7 @@ async def mostrar_fila(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("SELECT user_id, username, video_id, requested_at, status FROM pending_requests ORDER BY requested_at ASC")
+    cur.execute("SELECT user_id, username, video_id, requested_at, status FROM pending_requests WHERE status = 'pendente' ORDER BY requested_at ASC")
     rows = cur.fetchall()
     conn.close()
 
