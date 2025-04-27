@@ -89,6 +89,7 @@ def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="esperando
         conn.close()
 
 async def iniciar_adicionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("is_admin"):
     await update.message.reply_text("📝 Digite o nome do produto:")
     return WAITING_FOR_NOME_PRODUTO
 
@@ -211,6 +212,7 @@ async def iniciar_avancado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     senha = update.message.text.strip()
     if senha == str(ADMIN_PASSWORD):
+        context.user_data["is_admin"] = True
         texto = (
             "🔧 *Menu Avançado* 🔧\n\n"
             "/fila - Listar pedidos pendentes\n"
@@ -226,7 +228,7 @@ async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mostrar_fila(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     admin_ids = [6294708048]
-    if user.id not in admin_ids:
+    if not context.user_data.get("is_admin"):
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
