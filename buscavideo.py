@@ -92,6 +92,7 @@ async def iniciar_adicionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📝 Digite o nome do produto:")
     return WAITING_FOR_NOME_PRODUTO
 
+main_conv = ConversationHandler
 async def receber_nome_produto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["nome_produto"] = update.message.text.strip()
     await update.message.reply_text("🔢 Agora, digite o ID do produto (formato 123-ABC-X1Z):")
@@ -169,7 +170,7 @@ async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user, vid, m
 # ————— Conversa /busca_id —————
 async def iniciar_busca_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Digite o ID no formato 123-ABC-X1Z (3 caracteres, hífen, 3 caracteres, hífen, 3 caracteres)."
+        "Digite o ID no formato 123-ABC-X1Z"
     )
     return WAITING_FOR_ID
 
@@ -312,7 +313,6 @@ if __name__ == "__main__":
         entry_points=[
             CommandHandler("busca_id", iniciar_busca_id),
             CommandHandler("avancado", iniciar_avancado),
-            CommandHandler("adicionar", iniciar_adicionar),  # <-- adiciona aqui como entrada
         ],
         states={
             WAITING_FOR_ID: [
