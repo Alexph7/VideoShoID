@@ -68,7 +68,7 @@ def buscar_link_por_id(vid):
     finally:
         conn.close()
 
-def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="esperando", hora_solicitacao=None):
+def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pedente", hora_solicitacao=None):
     conn = sqlite3.connect(DB_PATH)
     try:
         cur = conn.cursor()
@@ -89,9 +89,15 @@ def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="esperando
         conn.close()
 
 async def iniciar_adicionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # apenas admins podem adicionar
     if not context.user_data.get("is_admin"):
-        await update.message.reply_text("📝 Digite o nome do produto:")
+        await update.message.reply_text("❌ Você não tem permissão para usar /adicionar.")
+        return ConversationHandler.END
+
+    # admin: inicia normalmente o fluxo
+    await update.message.reply_text("📝 Digite o nome do produto:")
     return WAITING_FOR_NOME_PRODUTO
+
 
 main_conv = ConversationHandler
 async def receber_nome_produto(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,7 +133,7 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
     if usuarios:
         for (user_id,) in usuarios:
             try:
-                await update.get_bot().send_message(
+                await context.bot.send_message(
                     chat_id=user_id,
                     text=f"📦 Seu pedido para o ID `{vid}` foi concluído!\n🔗 {link}",
                     parse_mode="Markdown"
@@ -160,7 +166,8 @@ async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user, vid, m
         link_mensagem = f"https://t.me/c/{internal_chat_id}/{msg_id_str}" if internal_chat_id else "🔒 (Chat privado)"
 
         texto = f"📨 Novo pedido de ID\n"
-        texto += f"👤 Usuário: {user.username or user.first_name} (ID: {user.id})\n"
+        texto += f"👤 Usuário: {user.username or user.first_name or "Usuário desconhecido"
+} (ID: {user.id})\n"
         texto += f"🆔 Pedido: {vid}\n"
         texto += f"🔗 [Ver mensagem]({link_mensagem})\n"
 
@@ -185,7 +192,8 @@ async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     link = await executar_db(buscar_link_por_id, vid)
     user = update.effective_user
-    nome = user.username or user.first_name
+    nome = user.username or user.first_name or "Usuário desconhecido"
+
 
     if link:
         await update.message.reply_text(f"🔗 Link encontrado: {link}")
@@ -389,6 +397,13 @@ if __name__ == "__main__":
         entry_points=[
             CommandHandler("busca_id", iniciar_busca_id),
             CommandHandler("avancado", iniciar_avancado),
+            CommandHandler("adicionar", iniciar_adicionar),
+            CommandHandler("fila", mostrar_fila),
+            CommandHandler("historico", mostrar_historico),
+            CommandHandler("concluidos", mostrar_concluidos),
+            CommandHandler("rejeitados", mostrar_rejeitados),
+            CommandHandler("avancado", iniciar_avancado),
+            MessageHandler(filters.COMMAND, cancelar),
         ],
         states={
             WAITING_FOR_ID: [
@@ -398,15 +413,6 @@ if __name__ == "__main__":
             AGUARDANDO_SENHA: [
                 CommandHandler("avancado", iniciar_avancado),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, tratar_senha),
-            ],
-            MENU_ADMIN: [
-                CommandHandler("fila", mostrar_fila),
-                CommandHandler("adicionar", iniciar_adicionar),
-                CommandHandler("historico", mostrar_historico),
-                CommandHandler("concluidos", mostrar_concluidos),
-                CommandHandler("rejeitados", mostrar_rejeitados),
-                CommandHandler("avancado", iniciar_avancado),
-                MessageHandler(filters.COMMAND, cancelar),
             ],
             WAITING_FOR_NOME_PRODUTO: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome_produto),
@@ -423,8 +429,4 @@ if __name__ == "__main__":
     )
 
     app.add_handler(main_conv)
-    # Handler isolado para /adicionar, caso precise fora do fluxo principal
-    # (opcional, pois já está em entry_points acima)
-    # app.add_handler(CommandHandler("adicionar", iniciar_adicionar))
-
     app.run_polling()
