@@ -30,7 +30,7 @@ CANAL_ID = -1002563145936
 DB_PATH = "videos.db"
 
 # Estados de conversa
-WAITING_FOR_ID, AGUARDANDO_SENHA, MENU_ADMIN = 1, 2, 3
+WAITING_FOR_ID, AGUARDANDO_SENHA, MENU_ADMIN, WAITING_FOR_NOME_PRODUTO, WAITING_FOR_ID_PRODUTO, WAITING_FOR_LINK_PRODUTO = range(1, 7)
 
 # Regex para validar ID
 ID_PATTERN = re.compile(r'^[A-Za-z0-9]{3}-[A-Za-z0-9]{3}-[A-Za-z0-9]{3}$')
@@ -87,6 +87,67 @@ def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="esperando
         logger.error(f"Erro ao salvar pedido pendente: {e}")
     finally:
         conn.close()
+
+async def iniciar_adicionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📝 Digite o nome do produto:")
+    return WAITING_FOR_NOME_PRODUTO
+
+async def receber_nome_produto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["nome_produto"] = update.message.text.strip()
+    await update.message.reply_text("🔢 Agora, digite o ID do produto (formato 123-ABC-X1Z):")
+    return WAITING_FOR_ID_PRODUTO
+
+async def receber_id_produto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    vid = update.message.text.strip().upper()
+    if not ID_PATTERN.match(vid):
+        await update.message.reply_text("❌ ID inválido. Tente novamente no formato correto.")
+        return WAITING_FOR_ID_PRODUTO
+
+    context.user_data["id_produto"] = vid
+    await update.message.reply_text("🌐 Agora, envie o link do produto:")
+    return WAITING_FOR_LINK_PRODUTO
+
+async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    link = update.message.text.strip()
+    nome = context.user_data.get("nome_produto")
+    vid = context.user_data.get("id_produto")
+
+    # Salva no banco de dados
+    await executar_db(inserir_video, vid, link)
+
+    # Atualiza todos usuários que pediram esse ID
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id FROM pending_requests WHERE video_id = ? AND status = 'pendente'", (vid,))
+    usuarios = cur.fetchall()
+    conn.close()
+
+    if usuarios:
+        for (user_id,) in usuarios:
+            try:
+                await update.get_bot().send_message(
+                    chat_id=user_id,
+                    text=f"📦 Seu pedido para o ID `{vid}` foi concluído!\n🔗 {link}",
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.error(f"Erro ao enviar mensagem para {user_id}: {e}")
+
+        # Atualiza status para 'concluido'
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE pending_requests SET status = 'concluido' WHERE video_id = ? AND status = 'pendente'",
+            (vid,)
+        )
+        conn.commit()
+        conn.close()
+
+    await update.message.reply_text("✅ Produto adicionado com sucesso e usuários notificados!")
+
+    context.user_data.clear()
+    return ConversationHandler.END
+
 
 # ————— Funções de notificação —————
 async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user, vid, message):
@@ -152,6 +213,7 @@ async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         texto = (
             "🔧 *Menu Avançado* 🔧\n\n"
             "/fila - Listar pedidos pendentes\n"
+            "/adicionar - adicionar produtos\n"
         )
         await update.message.reply_text(texto, parse_mode="Markdown")
         return MENU_ADMIN
@@ -245,10 +307,12 @@ if __name__ == "__main__":
         .build()
     )
 
+    # Conversation handler principal, incluindo /adicionar
     main_conv = ConversationHandler(
         entry_points=[
             CommandHandler("busca_id", iniciar_busca_id),
             CommandHandler("avancado", iniciar_avancado),
+            CommandHandler("adicionar", iniciar_adicionar),  # <-- adiciona aqui como entrada
         ],
         states={
             WAITING_FOR_ID: [
@@ -261,8 +325,18 @@ if __name__ == "__main__":
             ],
             MENU_ADMIN: [
                 CommandHandler("fila", mostrar_fila),
+                CommandHandler("adicionar", iniciar_adicionar),
                 CommandHandler("avancado", iniciar_avancado),
                 MessageHandler(filters.COMMAND, cancelar),
+            ],
+            WAITING_FOR_NOME_PRODUTO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome_produto),
+            ],
+            WAITING_FOR_ID_PRODUTO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_id_produto),
+            ],
+            WAITING_FOR_LINK_PRODUTO: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receber_link_produto),
             ],
         },
         fallbacks=[MessageHandler(filters.COMMAND, cancelar)],
@@ -270,4 +344,8 @@ if __name__ == "__main__":
     )
 
     app.add_handler(main_conv)
+    # Handler isolado para /adicionar, caso precise fora do fluxo principal
+    # (opcional, pois já está em entry_points acima)
+    # app.add_handler(CommandHandler("adicionar", iniciar_adicionar))
+
     app.run_polling()
