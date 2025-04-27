@@ -90,7 +90,7 @@ def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="esperando
 
 async def iniciar_adicionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("is_admin"):
-    await update.message.reply_text("📝 Digite o nome do produto:")
+        await update.message.reply_text("📝 Digite o nome do produto:")
     return WAITING_FOR_NOME_PRODUTO
 
 main_conv = ConversationHandler
