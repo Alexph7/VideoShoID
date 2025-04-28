@@ -232,7 +232,7 @@ async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(texto, parse_mode="Markdown")
         return MENU_ADMIN
     else:
-        await update.message.reply_text("❌ Senha incorreta.")
+        await update.message.reply_text()
         return ConversationHandler.END
 
 # ————— Mostrar fila —————
