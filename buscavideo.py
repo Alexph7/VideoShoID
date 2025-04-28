@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import re
 import asyncio
+from telegram import InputFile
 from telegram import BotCommand, BotCommandScopeDefault, Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -13,6 +14,13 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
+# caminho absoluto da pasta onde está este .py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# caminhos para as imagens
+IMG1_PATH = os.path.join(BASE_DIR, "imagens", "passo1.jpg")
+IMG2_PATH = os.path.join(BASE_DIR, "imagens", "passo2.jpg")
 
 # ————— Configurações básicas —————
 logging.basicConfig(level=logging.INFO)
@@ -87,6 +95,12 @@ def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pedente",
         logger.error(f"Erro ao salvar pedido pendente: {e}")
     finally:
         conn.close()
+
+# Handler para /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🔎 Olá para começar, você pode acionar a qualquer momento o comando /busca_id clicando em cima dele ou no menu lateral"
+    )
 
 async def iniciar_adicionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # apenas admins podem adicionar
@@ -178,7 +192,7 @@ async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user, vid, m
 # ————— Conversa /busca_id —————
 async def iniciar_busca_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Digite o ID no formato 123-ABC-X1Z"
+        "Digite o ID no formato 123-ABC-X1Z ou se não souber como encontrar clique em /ajuda"
     )
     return WAITING_FOR_ID
 
@@ -340,7 +354,8 @@ async def setup_commands(app):
         await app.bot.set_my_commands(
             [
                 BotCommand("busca_id", "Buscar vídeo por ID"),
-                BotCommand("avancado", "Comandos avançados (admin)"),
+                BotCommand("ajuda", "Como encontrar o ID na Shopee"),
+                BotCommand("avancado", "Disponivel em Proximas atualizações"),
             ],
             scope=BotCommandScopeDefault()
         )
@@ -382,6 +397,25 @@ def init_db():
     finally:
         conn.close()
 
+async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Aqui está como encontrar o ID. Siga os passos abaixo:")
+
+    # Passo 1
+    with open(IMG1_PATH, "rb") as img1:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=InputFile(img1),
+            caption="📌 Passo 1: Escolha o Produto e Clique em Compartilhar."
+        )
+
+    # Passo 2
+    with open(IMG2_PATH, "rb") as img2:
+        await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=InputFile(img2),
+            caption="📌 Passo 2: Copie o ID mostrado no Formato indicado. \n\n 👉~Acione o comando /busca_id e cole o código"
+        )
+
 # ————— Ponto de entrada —————
 if __name__ == "__main__":
     init_db()
@@ -395,6 +429,7 @@ if __name__ == "__main__":
     # Conversation handler principal, incluindo /adicionar
     main_conv = ConversationHandler(
         entry_points=[
+            CommandHandler("start", start),
             CommandHandler("busca_id", iniciar_busca_id),
             CommandHandler("avancado", iniciar_avancado),
             CommandHandler("adicionar", iniciar_adicionar),
@@ -403,6 +438,7 @@ if __name__ == "__main__":
             CommandHandler("concluidos", mostrar_concluidos),
             CommandHandler("rejeitados", mostrar_rejeitados),
             CommandHandler("avancado", iniciar_avancado),
+            CommandHandler("ajuda", ajuda),
             MessageHandler(filters.COMMAND, cancelar),
         ],
         states={
