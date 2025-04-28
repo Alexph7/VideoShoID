@@ -400,6 +400,7 @@ def init_db():
 async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Aqui está como encontrar o ID. Siga os passos abaixo:")
 
+
     # Passo 1
     with open(IMG1_PATH, "rb") as img1:
         await context.bot.send_photo(
