@@ -363,6 +363,39 @@ async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(resposta, parse_mode="Markdown")
 
 
+async def quem_pediu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("⚠️ Use o comando assim:\n`/quem_pediu <video_id>`", parse_mode="Markdown")
+        return
+
+    video_id = context.args[0]
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT user_id, username 
+        FROM pending_requests 
+        WHERE video_id = ?
+    """, (video_id,))
+
+    resultado = cur.fetchone()
+    conn.close()
+
+    if not resultado:
+        await update.message.reply_text("❌ Nenhum pedido encontrado com esse ID.")
+        return
+
+    user_id, username = resultado
+    resposta = (
+        f"🔍 *Informações do pedido*\n"
+        f"📽️ ID do vídeo: `{video_id}`\n"
+        f"👤 User ID: `{user_id}`\n"
+        f"📝 Nome de usuário: `{username if username else 'Desconhecido'}`"
+    )
+    await update.message.reply_text(resposta, parse_mode="Markdown")
+
+
 # ————— Cancelar conversa —————
 async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
