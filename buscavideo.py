@@ -335,6 +335,34 @@ async def mostrar_rejeitados(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(resposta, parse_mode="Markdown")
 
 
+async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT video_id, requested_at, status 
+        FROM pending_requests 
+        WHERE user_id = ?
+        ORDER BY requested_at DESC
+    """, (user_id,))
+
+    pedidos = cur.fetchall()
+    conn.close()
+
+    if not pedidos:
+        await update.message.reply_text("📭 Você ainda não tem pedidos registrados.")
+        return
+
+    resposta = "📄 *Seus pedidos anteriores:*\n\n"
+    for i, (video_id, requested_at, status) in enumerate(pedidos, 1):
+        resposta += f"*{i}.* 🆔 `{video_id}` | 🕒 `{requested_at}` | 📌 *{status}*\n"
+
+    await update.message.reply_text(resposta, parse_mode="Markdown")
+
+
 # ————— Cancelar conversa —————
 async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
