@@ -59,7 +59,7 @@ def inserir_video(vid, link=None):
     finally:
         conn.close()
 
-def historico_video_usuario(vid, usuario):
+def registrar_pedido_e_usuario(vid, usuario):
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute("INSERT INTO request_log(vid,user) VALUES(?,?)", (vid, usuario))
@@ -214,7 +214,7 @@ async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         salvar_pedido_pendente(user.id, nome, vid, status="encontrado", hora_solicitacao=now)
     else:
         await executar_db(inserir_video, vid)
-        await executar_db(historico_video_usuario, vid, nome)
+        await executar_db(registrar_pedido_e_usuario, vid, nome)
         salvar_pedido_pendente(user.id, nome, vid, status="pendente")
         await update.message.reply_text(
             "✅ ID adicionado à fila. Avisarei quando o link estiver disponível."
