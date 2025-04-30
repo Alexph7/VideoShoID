@@ -59,7 +59,7 @@ def inserir_video(vid, link=None):
     finally:
         conn.close()
 
-def registrar_log(vid, usuario):
+def historico_video_usuario(vid, usuario):
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute("INSERT INTO request_log(vid,user) VALUES(?,?)", (vid, usuario))
@@ -180,8 +180,7 @@ async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user, vid, m
         link_mensagem = f"https://t.me/c/{internal_chat_id}/{msg_id_str}" if internal_chat_id else "🔒 (Chat privado)"
 
         texto = f"📨 Novo pedido de ID\n"
-        texto += f"👤 Usuário: {user.username or user.first_name or "Usuário desconhecido"
-} (ID: {user.id})\n"
+        texto += f"👤 Usuário: {user.username or user.first_name or 'Usuário desconhecido'} (ID: {user.id})\n"
         texto += f"🆔 Pedido: {vid}\n"
         texto += f"🔗 [Ver mensagem]({link_mensagem})\n"
 
@@ -215,7 +214,7 @@ async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         salvar_pedido_pendente(user.id, nome, vid, status="encontrado", hora_solicitacao=now)
     else:
         await executar_db(inserir_video, vid)
-        await executar_db(registrar_log, vid, nome)
+        await executar_db(historico_video_usuario, vid, nome)
         salvar_pedido_pendente(user.id, nome, vid, status="pendente")
         await update.message.reply_text(
             "✅ ID adicionado à fila. Avisarei quando o link estiver disponível."
