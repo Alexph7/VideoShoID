@@ -32,6 +32,7 @@ if not BOT_TOKEN:
 
 # Senha para acessar comandos avançados (só admins sabem)
 ADMIN_PASSWORD = 5590
+ADMIN_IDS = [6294708048]  # adicione aqui todos os user_id dos seus admins
 
 CANAL_ID = -1002563145936
 DB_PATH = "videos.db"
@@ -214,12 +215,25 @@ async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-# ————— Comando /avancado para admins —————
-async def iniciar_avancado(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Disponível em versões futuras"
-    )
+async def iniciar_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    # Se já for admin conhecido
+    if user_id in ADMIN_IDS:
+        context.user_data["is_admin"] = True
+        texto = (
+            "🔧 *Menu Admin* 🔧\n\n"
+            "/fila-pendentes – Listar pedidos pendentes\n"
+            "/adicionar – Adicionar produtos\n"
+            "/historico – Ver todos os pedidos\n"
+            "/concluidos – Ver apenas pedidos concluídos\n"
+            "/rejeitados – Ver apenas pedidos rejeitados\n"
+            "/consultar_pedido – Ver quem pediu o ID\n"
+        )
+        return await update.message.reply_text(texto, parse_mode="Markdown")
+    # Senão, pede a senha
+    await update.message.reply_text("🔒 Você não está autorizado automaticamente. Digite a senha de admin:")
     return AGUARDANDO_SENHA
+
 
 async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     senha = update.message.text.strip()
@@ -420,8 +434,8 @@ async def setup_commands(app):
         await app.bot.set_my_commands(
             [
                 BotCommand("busca_id", "Buscar vídeo por ID"),
-                BotCommand("ajuda", "Como encontrar o ID na Shopee"),
                 BotCommand("meus_pedidos", "Veja seu historico"),
+                BotCommand("ajuda", "Como encontrar o ID na Shopee"),
             ],
             scope=BotCommandScopeDefault()
         )
@@ -498,13 +512,12 @@ if __name__ == "__main__":
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("busca_id", iniciar_busca_id),
-            CommandHandler("avancado", iniciar_avancado),
             CommandHandler("adicionar", iniciar_adicionar),
             CommandHandler("fila", mostrar_fila),
             CommandHandler("historico", mostrar_historico),
             CommandHandler("concluidos", mostrar_concluidos),
             CommandHandler("rejeitados", mostrar_rejeitados),
-            CommandHandler("avancado", iniciar_avancado),
+            CommandHandler("admin", iniciar_admin),
             CommandHandler("ajuda", ajuda),
             CommandHandler("meus_pedidos", mostrar_meus_pedidos),
             CommandHandler("quem_pediu", consultar_pedido),
@@ -516,7 +529,7 @@ if __name__ == "__main__":
                 CommandHandler("busca_id", iniciar_busca_id),
             ],
             AGUARDANDO_SENHA: [
-                CommandHandler("avancado", iniciar_avancado),
+                CommandHandler("admin", iniciar_admin),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, tratar_senha),
             ],
             WAITING_FOR_NOME_PRODUTO: [
