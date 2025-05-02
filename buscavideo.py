@@ -40,6 +40,16 @@ DB_PATH = "videos.db"
 # Estados de conversa
 WAITING_FOR_ID, AGUARDANDO_SENHA, MENU_ADMIN, WAITING_FOR_NOME_PRODUTO, WAITING_FOR_ID_PRODUTO, WAITING_FOR_LINK_PRODUTO = range(1, 7)
 
+ADMIN_MENU = (
+    "🔧 *Menu Admin* 🔧\n\n"
+    "/adicionar – Adicionar produtos\n"
+    "/fila – Listar pedidos pendentes\n"
+    "/historico – Ver todos os pedidos\n"
+    "/concluidos – Ver apenas pedidos concluídos\n"
+    "/rejeitados – Ver apenas pedidos rejeitados\n"
+    "/consultar\\_pedido – Ver quem pediu o ID\n"
+)
+
 # Regex para validar ID
 ID_PATTERN = re.compile(r'^[A-Za-z0-9]{3}-[A-Za-z0-9]{3}-[A-Za-z0-9]{3}$')
 
@@ -215,23 +225,18 @@ async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
+
 async def iniciar_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    # Se já for admin conhecido
     if user_id in ADMIN_IDS:
         context.user_data["is_admin"] = True
         texto = (
-            "🔧 *Menu Admin* 🔧\n\n"
-            "/adicionar – Adicionar produtos\n"
-            "/fila-pendentes – Listar pedidos pendentes\n"
-            "/historico – Ver todos os pedidos\n"
-            "/concluidos – Ver apenas pedidos concluídos\n"
-            "/rejeitados – Ver apenas pedidos rejeitados\n"
-            "/consultar_pedido – Ver quem pediu o ID\n"
+            ADMIN_MENU
         )
-        return await update.message.reply_text(texto, parse_mode="Markdown")
-    # Senão, pede a senha
-    await update.message.reply_text("🔒 Você não está autorizado automaticamente. Digite a senha de admin:")
+        await update.message.reply_text(texto, parse_mode="Markdown")
+        return MENU_ADMIN
+
+    await update.message.reply_text("🔒 Digite a senha de admin:")
     return AGUARDANDO_SENHA
 
 
@@ -240,13 +245,7 @@ async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if senha == str(ADMIN_PASSWORD):
         context.user_data["is_admin"] = True
         texto = (
-            "🔧 *Menu Avançado* 🔧\n\n"
-            "/fila-pendentes - Listar pedidos pendentes\n"
-            "/adicionar - adicionar produtos\n"
-            "/historico - Ver todos os pedidos\n"
-            "/concluidos - Ver apenas pedidos concluídos\n"
-            "/rejeitados - Ver apenas pedidos rejeitados\n"
-            "/consultar_pedido - Ver quem pediu o ID\n"
+            ADMIN_MENU
         )
         await update.message.reply_text(texto, parse_mode="Markdown")
         return MENU_ADMIN
@@ -516,7 +515,6 @@ if __name__ == "__main__":
             CommandHandler("admin", iniciar_admin),
             CommandHandler("ajuda", ajuda),
             CommandHandler("meus_pedidos", mostrar_meus_pedidos),
-            MessageHandler(filters.COMMAND, cancelar),
         ],
         states={
             WAITING_FOR_ID: [
