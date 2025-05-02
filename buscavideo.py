@@ -12,8 +12,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     MessageHandler,
-    filters,
-)
+    filters)
 
 # caminho absoluto da pasta onde está este .py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -233,6 +232,7 @@ async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/historico - Ver todos os pedidos\n"
             "/concluidos - Ver apenas pedidos concluídos\n"
             "/rejeitados - Ver apenas pedidos rejeitados\n"
+            "/consultar_pedido - Ver quem pediu o ID\n"
         )
         await update.message.reply_text(texto, parse_mode="Markdown")
         return MENU_ADMIN
@@ -336,6 +336,7 @@ async def mostrar_rejeitados(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     user = update.effective_user
     user_id = user.id
 
@@ -363,38 +364,51 @@ async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text(resposta, parse_mode="Markdown")
 
 
-async def quem_pediu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("⚠️ Use o comando assim:\n`/quem_pediu <video_id>`", parse_mode="Markdown")
-        return
+# 1) Defina o estado lá em cima, junto com os outros:
+WAITING_FOR_QUEM = 7
 
-    video_id = context.args[0]
 
+# 2) Use só essa função para os dois passos:
+async def consultar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    # 2.1) Só admin pode usar
+    if not context.user_data.get("is_admin"):
+        return await update.message.reply_text("❌ Você não tem permissão.")
+
+    # 2.2) Se veio com argumento, processa
+    if context.args:
+        video_id = context.args[0].strip().upper()
+    # 2.3) Se não, é porque acabamos de chamar "/quem_pediu" — pedimos o ID
+    else:
+        await update.message.reply_text(
+            "🔍 Diga o ID do vídeo e eu te mostro quem pediu (se existir):"
+        )
+        return WAITING_FOR_QUEM
+
+    # 3) Aqui cai tanto se veio em context.args quanto se veio pelo MessageHandler
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-
-    cur.execute("""
-        SELECT user_id, username 
-        FROM pending_requests 
-        WHERE video_id = ?
-    """, (video_id,))
-
+    cur.execute(
+        "SELECT user_id, username FROM pending_requests WHERE video_id = ?",
+        (video_id,)
+    )
     resultado = cur.fetchone()
     conn.close()
 
     if not resultado:
         await update.message.reply_text("❌ Nenhum pedido encontrado com esse ID.")
-        return
+    else:
+        user_id, username = resultado
+        await update.message.reply_text(
+            f"🔍 *Informações do pedido*\n"
+            f"📽️ ID do vídeo: `{video_id}`\n"
+            f"👤 User ID: `{user_id}`\n"
+            f"📝 Nome de usuário: `{username or 'Desconhecido'}`",
+            parse_mode="Markdown"
+        )
 
-    user_id, username = resultado
-    resposta = (
-        f"🔍 *Informações do pedido*\n"
-        f"📽️ ID do vídeo: `{video_id}`\n"
-        f"👤 User ID: `{user_id}`\n"
-        f"📝 Nome de usuário: `{username if username else 'Desconhecido'}`"
-    )
-    await update.message.reply_text(resposta, parse_mode="Markdown")
-
+    # 4) Limpa o fluxo de conversa (se veio por ele)
+    return ConversationHandler.END
 
 # ————— Cancelar conversa —————
 async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -407,7 +421,7 @@ async def setup_commands(app):
             [
                 BotCommand("busca_id", "Buscar vídeo por ID"),
                 BotCommand("ajuda", "Como encontrar o ID na Shopee"),
-                BotCommand("avancado", "Disponivel em Proximas atualizações"),
+                BotCommand("meus_pedidos", "Veja seu historico"),
             ],
             scope=BotCommandScopeDefault()
         )
@@ -492,6 +506,8 @@ if __name__ == "__main__":
             CommandHandler("rejeitados", mostrar_rejeitados),
             CommandHandler("avancado", iniciar_avancado),
             CommandHandler("ajuda", ajuda),
+            CommandHandler("meus_pedidos", mostrar_meus_pedidos),
+            CommandHandler("quem_pediu", consultar_pedido),
             MessageHandler(filters.COMMAND, cancelar),
         ],
         states={
@@ -511,6 +527,9 @@ if __name__ == "__main__":
             ],
             WAITING_FOR_LINK_PRODUTO: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receber_link_produto),
+            ],
+            WAITING_FOR_QUEM: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, consultar_pedido)
             ],
         },
         fallbacks=[MessageHandler(filters.COMMAND, cancelar)],
