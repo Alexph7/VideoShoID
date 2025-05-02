@@ -222,8 +222,8 @@ async def iniciar_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["is_admin"] = True
         texto = (
             "🔧 *Menu Admin* 🔧\n\n"
-            "/fila-pendentes – Listar pedidos pendentes\n"
             "/adicionar – Adicionar produtos\n"
+            "/fila-pendentes – Listar pedidos pendentes\n"
             "/historico – Ver todos os pedidos\n"
             "/concluidos – Ver apenas pedidos concluídos\n"
             "/rejeitados – Ver apenas pedidos rejeitados\n"
@@ -251,8 +251,9 @@ async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(texto, parse_mode="Markdown")
         return MENU_ADMIN
     else:
-        await update.message.reply_text()
+        await update.message.reply_text("❌ Senha incorreta. Acesso negado.")
         return ConversationHandler.END
+
 
 # ————— Mostrar fila —————
 async def mostrar_fila(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -507,20 +508,14 @@ if __name__ == "__main__":
         .build()
     )
 
-    # Conversation handler principal, incluindo /adicionar
+    # Conversation handler principal, incluindo /adicionar e menu admin
     main_conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
             CommandHandler("busca_id", iniciar_busca_id),
-            CommandHandler("adicionar", iniciar_adicionar),
-            CommandHandler("fila", mostrar_fila),
-            CommandHandler("historico", mostrar_historico),
-            CommandHandler("concluidos", mostrar_concluidos),
-            CommandHandler("rejeitados", mostrar_rejeitados),
             CommandHandler("admin", iniciar_admin),
             CommandHandler("ajuda", ajuda),
             CommandHandler("meus_pedidos", mostrar_meus_pedidos),
-            CommandHandler("quem_pediu", consultar_pedido),
             MessageHandler(filters.COMMAND, cancelar),
         ],
         states={
@@ -529,8 +524,16 @@ if __name__ == "__main__":
                 CommandHandler("busca_id", iniciar_busca_id),
             ],
             AGUARDANDO_SENHA: [
-                CommandHandler("admin", iniciar_admin),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, tratar_senha),
+                CommandHandler("admin", iniciar_admin),
+            ],
+            MENU_ADMIN: [
+                CommandHandler("adicionar", iniciar_adicionar),
+                CommandHandler("fila", mostrar_fila),
+                CommandHandler("historico", mostrar_historico),
+                CommandHandler("concluidos", mostrar_concluidos),
+                CommandHandler("rejeitados", mostrar_rejeitados),
+                CommandHandler("consultar_pedido", consultar_pedido),
             ],
             WAITING_FOR_NOME_PRODUTO: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome_produto),
@@ -542,11 +545,12 @@ if __name__ == "__main__":
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receber_link_produto),
             ],
             WAITING_FOR_QUEM: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, consultar_pedido)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, consultar_pedido),
             ],
         },
         fallbacks=[MessageHandler(filters.COMMAND, cancelar)],
         allow_reentry=True,
+        conversation_timeout=259200
     )
 
     app.add_handler(main_conv)
