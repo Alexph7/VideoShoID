@@ -546,7 +546,7 @@ if __name__ == "__main__":
                 MessageHandler(filters.TEXT & ~filters.COMMAND, consultar_pedido),
             ],
         },
-        fallbacks=[MessageHandler(filters.COMMAND, cancelar)],
+        fallbacks=[ CommandHandler("cancelar", cancelar)],
         allow_reentry=True,
         conversation_timeout=259200
     )
