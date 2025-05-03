@@ -80,7 +80,7 @@ def buscar_link_por_id(vid):
     finally:
         conn.close()
 
-def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pedente", hora_solicitacao=None):
+def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente", hora_solicitacao=None):
     conn = sqlite3.connect(DB_PATH)
     try:
         cur = conn.cursor()
@@ -117,7 +117,6 @@ async def iniciar_adicionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return WAITING_FOR_NOME_PRODUTO
 
 
-main_conv = ConversationHandler
 async def receber_nome_produto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["nome_produto"] = update.message.text.strip()
     await update.message.reply_text("🔢 Agora, digite o ID do produto (formato 123-ABC-X1Z):")
@@ -250,7 +249,6 @@ async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ————— Mostrar fila —————
 async def mostrar_fila(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    admin_ids = [6294708048]
     if not context.user_data.get("is_admin"):
         await update.message.reply_text("❌ Você não tem permissão.")
         return
@@ -440,6 +438,12 @@ def init_db():
     try:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
+        # tabela de administradores dinâmicos
+        cur.execute(
+            '''CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY
+            )'''
+        )
         cur.execute(
             '''CREATE TABLE IF NOT EXISTS videos (
                 id TEXT PRIMARY KEY,
@@ -475,20 +479,27 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # Passo 1
-    with open(IMG1_PATH, "rb") as img1:
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=InputFile(img1),
-            caption="📌 Passo 1: Escolha o Produto e Clique em Compartilhar."
-        )
+    if not os.path.exists(IMG1_PATH):
+        logger.warning("Imagem passo1 não encontrada!")
+    else:
+        with open(IMG1_PATH, "rb") as img1:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=InputFile(img1),
+                caption="📌 Passo 1: Escolha o Produto e Clique em Compartilhar."
+            )
 
     # Passo 2
-    with open(IMG2_PATH, "rb") as img2:
-        await context.bot.send_photo(
-            chat_id=update.effective_chat.id,
-            photo=InputFile(img2),
-            caption="📌 Passo 2: Copie o ID mostrado no Formato indicado. \n\n 👉~Acione o comando /busca_id e cole o código"
-        )
+    if not os.path.exists(IMG2_PATH):
+        logger.warning("Imagem passo2 não encontrada!")
+    else:
+        with open(IMG2_PATH, "rb") as img2:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=InputFile(img2),
+                caption="📌 Passo 2: Copie o ID mostrado no Formato indicado. \n\n 👉~Acione o comando /busca_id e cole o código"
+            )
+
 
 async def mostrar_total_pedidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Apenas admins
@@ -505,9 +516,53 @@ async def mostrar_total_pedidos(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text(f"📊 Total de pedidos registrados no banco: {total}")
 
+def load_admins_from_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id FROM admins")
+    rows = [r[0] for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+def inserir_admin_db(user_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute("INSERT OR IGNORE INTO admins(user_id) VALUES(?)", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # 1) só admin pode usar
+        if not context.user_data.get("is_admin"):
+            return await update.message.reply_text("❌ Você não tem permissão para isso.")
+
+        # 2) pega o argumento
+        if not context.args:
+            return await update.message.reply_text("Use: /addadmin <user_id>")
+
+        try:
+            novo_id = int(context.args[0])
+        except ValueError:
+            return await update.message.reply_text("❌ ID inválido. Passe um número de usuário válido.")
+
+        # 3) insere no DB e na lista em memória
+        inserir_admin_db(novo_id)
+        if novo_id not in ADMIN_IDS:
+            ADMIN_IDS.append(novo_id)
+
+        await update.message.reply_text(f"✅ Usuário `{novo_id}` adicionado como admin.", parse_mode="Markdown")
+
+
 # ————— Ponto de entrada —————
 if __name__ == "__main__":
     init_db()
+    # carrega do DB
+    dynamic_admins = load_admins_from_db()
+    # mescla com os admins fixos que você colocava manualmente
+    ADMIN_IDS = list(set(ADMIN_IDS + dynamic_admins))
+
     app = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
@@ -560,6 +615,7 @@ if __name__ == "__main__":
         CommandHandler("rejeitados", mostrar_rejeitados),
         CommandHandler("consultar_pedido", consultar_pedido),
         CommandHandler("total_pedidos", mostrar_total_pedidos),
+        CommandHandler("addadmin", add_admin)
     ]
     for handler in admin_handlers:
         app.add_handler(handler)
