@@ -48,6 +48,7 @@ ADMIN_MENU = (
     "/concluidos – Ver apenas pedidos concluídos\n"
     "/rejeitados – Ver apenas pedidos rejeitados\n"
     "/consultar\\_pedido – Ver quem pediu o ID\n"
+    "/total\\_pedidos – Ver total de pedidos no banco\n"
 )
 
 # Regex para validar ID
@@ -497,6 +498,21 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption="📌 Passo 2: Copie o ID mostrado no Formato indicado. \n\n 👉~Acione o comando /busca_id e cole o código"
         )
 
+async def mostrar_total_pedidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Apenas admins
+    if not context.user_data.get("is_admin"):
+        await update.message.reply_text("❌ Você não tem permissão para usar este comando.")
+        return
+
+    # Conecta ao banco e conta todos os pedidos
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM pending_requests")
+    total = cur.fetchone()[0]
+    conn.close()
+
+    await update.message.reply_text(f"📊 Total de pedidos registrados no banco: {total}")
+
 # ————— Ponto de entrada —————
 if __name__ == "__main__":
     init_db()
@@ -532,6 +548,7 @@ if __name__ == "__main__":
                 CommandHandler("concluidos", mostrar_concluidos),
                 CommandHandler("rejeitados", mostrar_rejeitados),
                 CommandHandler("consultar_pedido", consultar_pedido),
+                CommandHandler("total_pedidos", mostrar_total_pedidos),
             ],
             WAITING_FOR_NOME_PRODUTO: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome_produto),
