@@ -38,7 +38,7 @@ CANAL_ID = -1002563145936
 DB_PATH = "videos.db"
 
 # Estados de conversa
-WAITING_FOR_ID, AGUARDANDO_SENHA, MENU_ADMIN, WAITING_FOR_NOME_PRODUTO, WAITING_FOR_ID_PRODUTO, WAITING_FOR_LINK_PRODUTO = range(1, 7)
+WAITING_FOR_ID, AGUARDANDO_SENHA, WAITING_FOR_NOME_PRODUTO, WAITING_FOR_ID_PRODUTO, WAITING_FOR_LINK_PRODUTO = range(1, 6)
 
 ADMIN_MENU = (
     "🔧 *Menu Admin* 🔧\n\n"
@@ -231,28 +231,20 @@ async def iniciar_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in ADMIN_IDS:
         context.user_data["is_admin"] = True
-        texto = (
-            ADMIN_MENU
-        )
-        await update.message.reply_text(texto, parse_mode="Markdown")
-        return MENU_ADMIN
+        await update.message.reply_text(ADMIN_MENU, parse_mode="Markdown")
+        return ConversationHandler.END
 
     await update.message.reply_text("🔒 Digite a senha de admin:")
     return AGUARDANDO_SENHA
 
 
 async def tratar_senha(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    senha = update.message.text.strip()
-    if senha == str(ADMIN_PASSWORD):
+    if update.message.text.strip() == str(ADMIN_PASSWORD):
         context.user_data["is_admin"] = True
-        texto = (
-            ADMIN_MENU
-        )
-        await update.message.reply_text(texto, parse_mode="Markdown")
-        return MENU_ADMIN
+        await update.message.reply_text(ADMIN_MENU, parse_mode="Markdown")
     else:
         await update.message.reply_text("❌ Senha incorreta. Acesso negado.")
-        return ConversationHandler.END
+    return ConversationHandler.END
 
 
 # ————— Mostrar fila —————
@@ -541,15 +533,6 @@ if __name__ == "__main__":
                 MessageHandler(filters.TEXT & ~filters.COMMAND, tratar_senha),
                 CommandHandler("admin", iniciar_admin),
             ],
-            MENU_ADMIN: [
-                CommandHandler("adicionar", iniciar_adicionar),
-                CommandHandler("fila", mostrar_fila),
-                CommandHandler("historico", mostrar_historico),
-                CommandHandler("concluidos", mostrar_concluidos),
-                CommandHandler("rejeitados", mostrar_rejeitados),
-                CommandHandler("consultar_pedido", consultar_pedido),
-                CommandHandler("total_pedidos", mostrar_total_pedidos),
-            ],
             WAITING_FOR_NOME_PRODUTO: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receber_nome_produto),
             ],
@@ -569,4 +552,15 @@ if __name__ == "__main__":
     )
 
     app.add_handler(main_conv)
+    admin_handlers = [
+        CommandHandler("adicionar", iniciar_adicionar),
+        CommandHandler("fila", mostrar_fila),
+        CommandHandler("historico", mostrar_historico),
+        CommandHandler("concluidos", mostrar_concluidos),
+        CommandHandler("rejeitados", mostrar_rejeitados),
+        CommandHandler("consultar_pedido", consultar_pedido),
+        CommandHandler("total_pedidos", mostrar_total_pedidos),
+    ]
+    for handler in admin_handlers:
+        app.add_handler(handler)
     app.run_polling()
