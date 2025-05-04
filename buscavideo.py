@@ -41,9 +41,7 @@ if not DATABASE_URL:
 # Senha para acessar comandos avançados (só admins sabem)
 ADMIN_PASSWORD = 5590
 ADMIN_IDS = [6294708048]  # adicione aqui todos os user_id dos seus admins
-
 CANAL_ID = -1002563145936
-DB_PATH = "videos.db"
 
 # Estados de conversa
 WAITING_FOR_ID, AGUARDANDO_SENHA, WAITING_FOR_NOME_PRODUTO, WAITING_FOR_ID_PRODUTO, WAITING_FOR_LINK_PRODUTO, WAITING_FOR_QUEM = range(1, 7)
@@ -78,9 +76,8 @@ async def executar_db(fn, *args):
         return None
 
 def inserir_video(vid, link=None):
-    conn = get_conn_pg()
-    try:
-        with conn.cursor() as cur:
+    with get_conn_pg() as conn:  # usa o 'with' para a conexão
+        with conn.cursor() as cur:  # usa o 'with' para o cursor
             if link is not None:
                 # insere ou atualiza o link se já existir id igual
                 cur.execute(
@@ -93,8 +90,7 @@ def inserir_video(vid, link=None):
                     (vid, link)
                 )
             else:
-                # insere só o id se link for None (não substitui nada se já existir)
-                cur.execute(
+                cur.execute(# insere só o id se link for None (não substitui nada se já existir)
                     """
                     INSERT INTO videos (id)
                     VALUES (%s)
@@ -102,20 +98,19 @@ def inserir_video(vid, link=None):
                     """,
                     (vid,)
                 )
-        conn.commit()
-    finally:
-        conn.close()
-
+        conn.commit()  # commit continua necessário
 
 
 def buscar_link_por_id(vid):
     conn = get_conn_pg()
     try:
-        cur = conn.execute("SELECT link FROM videos WHERE id=%s", (vid,))
-        row = cur.fetchone()
-        return row[0] if row else None
+        with conn.cursor() as cur:
+            cur.execute("SELECT link FROM videos WHERE id=%s", (vid,))
+            row = cur.fetchone()
+            return row[0] if row else None
     finally:
         conn.close()
+
 
 def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente"):
     try:
@@ -129,6 +124,7 @@ def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente"
                     """,
                     (usuario_id, nome_usuario, video_id, status)
                 )
+            conn.commit()
     except Exception as e:
         logger.error(f"Erro ao salvar pedido pendente: {e}")
 
