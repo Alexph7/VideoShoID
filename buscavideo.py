@@ -4,7 +4,6 @@ import logging
 import psycopg2.extras
 import re
 import asyncio
-
 from dotenv import load_dotenv
 from telegram import BotCommand, BotCommandScopeDefault, Update, InputFile
 from telegram.ext import (
@@ -81,40 +80,58 @@ async def executar_db(fn, *args):
 def inserir_video(vid, link=None):
     conn = get_conn_pg()
     try:
-        conn.execute("INSERT OR REPLACE INTO videos(id,link) VALUES(?,?)", (vid, link))
+        with conn.cursor() as cur:
+            if link is not None:
+                # insere ou atualiza o link se já existir id igual
+                cur.execute(
+                    """
+                    INSERT INTO videos (id, link)
+                    VALUES (%s, %s)
+                    ON CONFLICT (id) DO UPDATE
+                      SET link = EXCLUDED.link
+                    """,
+                    (vid, link)
+                )
+            else:
+                # insere só o id se link for None (não substitui nada se já existir)
+                cur.execute(
+                    """
+                    INSERT INTO videos (id)
+                    VALUES (%s)
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    (vid,)
+                )
         conn.commit()
     finally:
         conn.close()
+
 
 
 def buscar_link_por_id(vid):
     conn = get_conn_pg()
     try:
-        cur = conn.execute("SELECT link FROM videos WHERE id=?", (vid,))
+        cur = conn.execute("SELECT link FROM videos WHERE id=%s", (vid,))
         row = cur.fetchone()
         return row[0] if row else None
     finally:
         conn.close()
 
-def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente", hora_solicitacao=None):
-    conn = get_conn_pg()
+def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente"):
     try:
-        cur = conn.cursor()
-        if hora_solicitacao:
-            cur.execute(
-                "INSERT INTO pending_requests (user_id, username, video_id, status, requested_at) VALUES (?, ?, ?, ?, ?)",
-                (usuario_id, nome_usuario, video_id, status, hora_solicitacao)
-            )
-        else:
-            cur.execute(
-                "INSERT INTO pending_requests (user_id, username, video_id, status) VALUES (?, ?, ?, ?)",
-                (usuario_id, nome_usuario, video_id, status)
-            )
-        conn.commit()
+        with get_conn_pg() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO pending_requests 
+                      (user_id, username, video_id, status) 
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (usuario_id, nome_usuario, video_id, status)
+                )
     except Exception as e:
         logger.error(f"Erro ao salvar pedido pendente: {e}")
-    finally:
-        conn.close()
+
 
 # Handler para /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -159,7 +176,7 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
     # Atualiza todos usuários que pediram esse ID
     conn = get_conn_pg()
     cur = conn.cursor()
-    cur.execute("SELECT user_id FROM pending_requests WHERE video_id = ? AND status = 'pendente'", (vid,))
+    cur.execute("SELECT user_id FROM pending_requests WHERE video_id = %s AND status = 'pendente'", (vid,))
     usuarios = cur.fetchall()
     conn.close()
 
@@ -178,7 +195,7 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
         conn = get_conn_pg()
         cur = conn.cursor()
         cur.execute(
-            "UPDATE pending_requests SET status = 'concluido' WHERE video_id = ? AND status = 'pendente'",
+            "UPDATE pending_requests SET status = 'concluido' WHERE video_id = %s AND status = 'pendente'",
             (vid,)
         )
         conn.commit()
@@ -372,7 +389,7 @@ async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYP
     cur.execute("""
         SELECT video_id, requested_at, status 
         FROM pending_requests 
-        WHERE user_id = ?
+        WHERE user_id = %s
         ORDER BY requested_at DESC
     """, (user_id,))
 
@@ -411,7 +428,7 @@ async def consultar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute(
-        "SELECT user_id, username FROM pending_requests WHERE video_id = ?",
+        "SELECT user_id, username FROM pending_requests WHERE video_id = %s",
         (video_id,)
     )
     resultado = cur.fetchone()
@@ -469,10 +486,10 @@ def init_db():
         )
         cur.execute(
             '''CREATE TABLE IF NOT EXISTS request_log (
-                rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 vid TEXT,
                 user TEXT,
-                ts DATETIME DEFAULT CURRENT_TIMESTAMP
+                ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )'''
         )
         cur.execute(
@@ -544,7 +561,12 @@ def load_admins_from_db():
 def inserir_admin_db(user_id: int):
     conn = get_conn_pg()
     try:
-        conn.execute("INSERT OR IGNORE INTO admins(user_id) VALUES(?)", (user_id,))
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO admins(user_id)
+            VALUES (%s)
+            ON CONFLICT (user_id) DO NOTHING
+        """, (user_id,))
         conn.commit()
     finally:
         conn.close()
