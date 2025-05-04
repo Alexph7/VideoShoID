@@ -1,9 +1,11 @@
 import os
 import sys
 import logging
-import sqlite3
+import psycopg2.extras
 import re
 import asyncio
+
+from dotenv import load_dotenv
 from telegram import BotCommand, BotCommandScopeDefault, Update, InputFile
 from telegram.ext import (
     ApplicationBuilder,
@@ -12,6 +14,8 @@ from telegram.ext import (
     ConversationHandler,
     MessageHandler,
     filters)
+
+load_dotenv()
 
 # caminho absoluto da pasta onde está este .py
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,9 +28,15 @@ IMG2_PATH = os.path.join(BASE_DIR, "imagens", "passo2.jpg")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
 if not BOT_TOKEN:
     logger.error("TELEGRAM_BOT_TOKEN não encontrado.")
+    sys.exit(1)
+if not DATABASE_URL:
+    logger.error("DATABASE_URL não encontrado.")
     sys.exit(1)
 
 # Senha para acessar comandos avançados (só admins sabem)
@@ -54,6 +64,13 @@ ADMIN_MENU = (
 ID_PATTERN = re.compile(r'^[A-Za-z0-9]{3}-[A-Za-z0-9]{3}-[A-Za-z0-9]{3}$')
 
 # ————— Funções de banco —————
+
+def get_conn_pg():
+    return psycopg2.connect(
+        DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
+
 async def executar_db(fn, *args):
     try:
         return await asyncio.to_thread(fn, *args)
@@ -62,7 +79,7 @@ async def executar_db(fn, *args):
         return None
 
 def inserir_video(vid, link=None):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     try:
         conn.execute("INSERT OR REPLACE INTO videos(id,link) VALUES(?,?)", (vid, link))
         conn.commit()
@@ -71,7 +88,7 @@ def inserir_video(vid, link=None):
 
 
 def buscar_link_por_id(vid):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     try:
         cur = conn.execute("SELECT link FROM videos WHERE id=?", (vid,))
         row = cur.fetchone()
@@ -80,7 +97,7 @@ def buscar_link_por_id(vid):
         conn.close()
 
 def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente", hora_solicitacao=None):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     try:
         cur = conn.cursor()
         if hora_solicitacao:
@@ -140,7 +157,7 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
     await executar_db(inserir_video, vid, link)
 
     # Atualiza todos usuários que pediram esse ID
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute("SELECT user_id FROM pending_requests WHERE video_id = ? AND status = 'pendente'", (vid,))
     usuarios = cur.fetchall()
@@ -158,7 +175,7 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
                 logger.error(f"Erro ao enviar mensagem para {user_id}: {e}")
 
         # Atualiza status para 'concluido'
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_conn_pg()
         cur = conn.cursor()
         cur.execute(
             "UPDATE pending_requests SET status = 'concluido' WHERE video_id = ? AND status = 'pendente'",
@@ -205,18 +222,23 @@ async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return WAITING_FOR_ID
 
+    # 1) Tenta buscar link existente
     link = await executar_db(buscar_link_por_id, vid)
     user = update.effective_user
     nome = user.username or user.first_name or "Usuário desconhecido"
 
-
     if link:
+        # 2a) Se existe, responde com o link e registra pedido como 'encontrado'
         await update.message.reply_text(f"🔗 Link encontrado: {link}")
-        now = sqlite3.connect(DB_PATH).execute("SELECT CURRENT_TIMESTAMP").fetchone()[0]
-        salvar_pedido_pendente(user.id, nome, vid, status="encontrado", hora_solicitacao=now)
+        await executar_db(
+            salvar_pedido_pendente,user.id,nome,vid,"encontrado"
+        )
     else:
+        # 2b) Se não existe, insere novo vídeo sem link e registra como 'pendente'
         await executar_db(inserir_video, vid)
-        salvar_pedido_pendente(user.id, nome, vid, status="pendente")
+        await executar_db(
+            salvar_pedido_pendente,user.id,nome,vid,"pendente"
+        )
         await update.message.reply_text(
             "✅ ID adicionado à fila. Avisarei quando o link estiver disponível."
         )
@@ -252,7 +274,7 @@ async def mostrar_fila(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute("SELECT user_id, username, video_id, requested_at, status FROM pending_requests WHERE status = 'pendente' ORDER BY requested_at ASC")
     rows = cur.fetchall()
@@ -275,7 +297,7 @@ async def mostrar_historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute("SELECT user_id, username, video_id, requested_at, status FROM pending_requests ORDER BY requested_at ASC")
     rows = cur.fetchall()
@@ -298,7 +320,7 @@ async def mostrar_concluidos(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute("SELECT user_id, username, video_id, requested_at FROM pending_requests WHERE status = 'concluido' ORDER BY requested_at ASC")
     rows = cur.fetchall()
@@ -321,7 +343,7 @@ async def mostrar_rejeitados(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute("SELECT user_id, username, video_id, requested_at FROM pending_requests WHERE status = 'rejeitado' ORDER BY requested_at ASC")
     rows = cur.fetchall()
@@ -344,7 +366,7 @@ async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user
     user_id = user.id
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
 
     cur.execute("""
@@ -386,7 +408,7 @@ async def consultar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return WAITING_FOR_QUEM
 
     # 3) Aqui cai tanto se veio em context.args quanto se veio pelo MessageHandler
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute(
         "SELECT user_id, username FROM pending_requests WHERE video_id = ?",
@@ -431,7 +453,7 @@ async def setup_commands(app):
 
 def init_db():
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_conn_pg()
         cur = conn.cursor()
         # tabela de administradores dinâmicos
         cur.execute(
@@ -503,7 +525,7 @@ async def mostrar_total_pedidos(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     # Conecta ao banco e conta todos os pedidos
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM pending_requests")
     total = cur.fetchone()[0]
@@ -512,7 +534,7 @@ async def mostrar_total_pedidos(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(f"📊 Total de pedidos registrados no banco: {total}")
 
 def load_admins_from_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     cur = conn.cursor()
     cur.execute("SELECT user_id FROM admins")
     rows = [r[0] for r in cur.fetchall()]
@@ -520,7 +542,7 @@ def load_admins_from_db():
     return rows
 
 def inserir_admin_db(user_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_conn_pg()
     try:
         conn.execute("INSERT OR IGNORE INTO admins(user_id) VALUES(?)", (user_id,))
         conn.commit()
