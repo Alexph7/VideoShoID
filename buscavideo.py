@@ -4,8 +4,7 @@ import logging
 import sqlite3
 import re
 import asyncio
-from telegram import InputFile
-from telegram import BotCommand, BotCommandScopeDefault, Update
+from telegram import BotCommand, BotCommandScopeDefault, Update, InputFile
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -38,7 +37,7 @@ CANAL_ID = -1002563145936
 DB_PATH = "videos.db"
 
 # Estados de conversa
-WAITING_FOR_ID, AGUARDANDO_SENHA, WAITING_FOR_NOME_PRODUTO, WAITING_FOR_ID_PRODUTO, WAITING_FOR_LINK_PRODUTO = range(1, 6)
+WAITING_FOR_ID, AGUARDANDO_SENHA, WAITING_FOR_NOME_PRODUTO, WAITING_FOR_ID_PRODUTO, WAITING_FOR_LINK_PRODUTO, WAITING_FOR_QUEM = range(1, 7)
 
 ADMIN_MENU = (
     "🔧 *Menu Admin* 🔧\n\n"
@@ -367,10 +366,6 @@ async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYP
         resposta += f"*{i}.* 🆔 `{video_id}` | 🕒 `{requested_at}` | 📌 *{status}*\n"
 
     await update.message.reply_text(resposta, parse_mode="Markdown")
-
-
-# 1) Defina o estado lá em cima, junto com os outros:
-WAITING_FOR_QUEM = 7
 
 
 # 2) Use só essa função para os dois passos:
