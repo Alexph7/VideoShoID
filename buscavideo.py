@@ -102,14 +102,11 @@ def inserir_video(vid, link=None):
 
 
 def buscar_link_por_id(vid):
-    conn = get_conn_pg()
-    try:
+    with get_conn_pg() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT link FROM videos WHERE id=%s", (vid,))
             row = cur.fetchone()
             return row[0] if row else None
-    finally:
-        conn.close()
 
 
 def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente"):
@@ -169,14 +166,16 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
     # Salva no banco de dados
     await executar_db(inserir_video, vid, link)
 
-    # Atualiza todos usuários que pediram esse ID
-    conn = get_conn_pg()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id FROM pending_requests WHERE video_id = %s AND status = 'pendente'", (vid,))
-    usuarios = cur.fetchall()
-    conn.close()
+    # Agora, buscamos usuários e atualizamos status com uma única conexão
+    with get_conn_pg() as conn:
+        with conn.cursor() as cur:
+            # Buscar usuários com pedidos pendentes para esse vídeo
+            cur.execute(
+                "SELECT user_id FROM pending_requests WHERE video_id = %s AND status = 'pendente'",
+                (vid,)
+            )
+            usuarios = cur.fetchall()
 
-    if usuarios:
         for (user_id,) in usuarios:
             try:
                 await context.bot.send_message(
@@ -187,18 +186,15 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
             except Exception as e:
                 logger.error(f"Erro ao enviar mensagem para {user_id}: {e}")
 
-        # Atualiza status para 'concluido'
-        conn = get_conn_pg()
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE pending_requests SET status = 'concluido' WHERE video_id = %s AND status = 'pendente'",
-            (vid,)
-        )
+        with conn.cursor() as cur:
+            # Atualiza o status dos pedidos para "concluido"
+            cur.execute(
+                "UPDATE pending_requests SET status = 'concluido' WHERE video_id = %s AND status = 'pendente'",
+                (vid,)
+            )
         conn.commit()
-        conn.close()
 
     await update.message.reply_text("✅ Produto adicionado com sucesso e usuários notificados!")
-
     context.user_data.clear()
     return ConversationHandler.END
 
