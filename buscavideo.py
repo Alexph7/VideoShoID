@@ -75,6 +75,28 @@ async def executar_db(fn, *args):
         logger.exception("Erro na operação de banco em thread")
         return None
 
+
+def criar_tabelas_se_nao_existirem():
+    with get_conn_pg() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS videos (
+                    id VARCHAR(20) PRIMARY KEY,
+                    link TEXT
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS pending_requests (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    username TEXT,
+                    video_id VARCHAR(20) REFERENCES videos(id),
+                    status TEXT CHECK (status IN ('pendente', 'concluido', 'rejeitado')) DEFAULT 'pendente'
+                )
+            """)
+        conn.commit()
+
+
 def inserir_video(vid, link=None):
     with get_conn_pg() as conn:  # usa o 'with' para a conexão
         with conn.cursor() as cur:  # usa o 'with' para o cursor
