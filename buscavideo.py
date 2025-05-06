@@ -29,19 +29,60 @@ logger = logging.getLogger(__name__)
 
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
-
 if not BOT_TOKEN:
     logger.error("TELEGRAM_BOT_TOKEN não encontrado.")
     sys.exit(1)
-if not DATABASE_URL:
-    logger.error("DATABASE_URL não encontrado.")
-    sys.exit(1)
+
+def get_conn_pg():
+    host = os.getenv("POSTGRES_HOST")
+    port = os.getenv("POSTGRES_PORT")
+    db   = os.getenv("POSTGRES_DB")
+    user = os.getenv("POSTGRES_USER")
+    pwd  = os.getenv("POSTGRES_PASSWORD")
+    cursor_factory = psycopg2.extras.RealDictCursor
+
+    # validação
+    if not all([host, port, db, user, pwd]):
+        logger.error("Variáveis POSTGRES_* não totalmente configuradas.")
+        sys.exit(1)
+
+    return psycopg2.connect(
+        host=host,
+        port=port,
+        dbname=db,
+        user=user,
+        password=pwd,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
+
 
 # Senha para acessar comandos avançados (só admins sabem)
 ADMIN_PASSWORD = 5590
 ADMIN_IDS = [6294708048]  # adicione aqui todos os user_id dos seus admins
 CANAL_ID = -1002563145936
+
+def buscar_todos_do_banco(query: str, params: tuple = ()):
+    """
+    Abre conexão, executa SELECT e retorna todos os registros
+    """
+    conn = get_conn_pg()
+    try:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def buscar_um_do_banco(query: str, params: tuple = ()):
+    conn = get_conn_pg()
+    try:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        return cur.fetchone()
+    finally:
+        conn.close()
+
 
 # Estados de conversa
 WAITING_FOR_ID, AGUARDANDO_SENHA, WAITING_FOR_NOME_PRODUTO, WAITING_FOR_ID_PRODUTO, WAITING_FOR_LINK_PRODUTO, WAITING_FOR_QUEM = range(1, 7)
@@ -61,41 +102,6 @@ ADMIN_MENU = (
 ID_PATTERN = re.compile(r'^[A-Za-z0-9]{3}-[A-Za-z0-9]{3}-[A-Za-z0-9]{3}$')
 
 # ————— Funções de banco —————
-
-def get_conn_pg():
-    return psycopg2.connect(
-        DATABASE_URL,
-        cursor_factory=psycopg2.extras.RealDictCursor
-    )
-
-async def executar_db(fn, *args):
-    try:
-        return await asyncio.to_thread(fn, *args)
-    except Exception:
-        logger.exception("Erro na operação de banco em thread")
-        return None
-
-
-def criar_tabelas_se_nao_existirem():
-    with get_conn_pg() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS videos (
-                    id VARCHAR(20) PRIMARY KEY,
-                    link TEXT
-                )
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS pending_requests (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    username TEXT,
-                    video_id VARCHAR(20) REFERENCES videos(id),
-                    status TEXT CHECK (status IN ('pendente', 'concluido', 'rejeitado')) DEFAULT 'pendente'
-                )
-            """)
-        conn.commit()
-
 
 def inserir_video(vid, link=None):
     with get_conn_pg() as conn:  # usa o 'with' para a conexão
@@ -122,13 +128,19 @@ def inserir_video(vid, link=None):
                 )
         conn.commit()  # commit continua necessário
 
+async def executar_db(fn, *args):
+    try:
+        return await asyncio.to_thread(fn, *args)
+    except Exception:
+        logger.exception("Erro na operação de banco em thread")
+        return None
 
 def buscar_link_por_id(vid):
     with get_conn_pg() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT link FROM videos WHERE id=%s", (vid,))
             row = cur.fetchone()
-            return row[0] if row else None
+            return row["link"] if row else None
 
 
 def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente"):
@@ -198,7 +210,8 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             usuarios = cur.fetchall()
 
-        for (user_id,) in usuarios:
+        for row in usuarios:
+            user_id = row["user_id"]
             try:
                 await context.bot.send_message(
                     chat_id=user_id,
@@ -305,20 +318,25 @@ async def mostrar_fila(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
-    conn = get_conn_pg()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, username, video_id, requested_at, status FROM pending_requests WHERE status = 'pendente' ORDER BY requested_at ASC")
-    rows = cur.fetchall()
-    conn.close()
+    rows = await asyncio.to_thread(
+        buscar_todos_do_banco,
+        "SELECT user_id, username, video_id, requested_at, status "
+        "FROM pending_requests WHERE status = 'pendente' ORDER BY requested_at ASC"
+    )
 
     if not rows:
         await update.message.reply_text("📭 Nenhum pedido pendente!")
         return
 
     resposta = "📋 *Pedidos pendentes:*\n\n"
-    for i, (user_id, username, video_id, requested_at, status) in enumerate(rows, 1):
+    for i, row in enumerate(rows, 1):
+        user_id = row["user_id"]
+        username = row["username"]
+        video_id = row["video_id"]
+        requested_at = row["requested_at"]
+        status = row["status"]
         resposta += f"*{i}.* 👤 {username} (`{user_id}`)\n"
-        resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}` — 📄 *{status}*\n\n"
+        resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}` — *{status}*\n\n"
     await update.message.reply_text(resposta, parse_mode="Markdown")
 
 
@@ -508,12 +526,12 @@ def init_db():
         )
         cur.execute(
             '''CREATE TABLE IF NOT EXISTS pending_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id TEXT,
                 username TEXT,
                 video_id TEXT,
                 requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                status TEXT DEFAULT 'esperando'
+                status TEXT DEFAULT 'pendente'
             )'''
         )
         conn.commit()
