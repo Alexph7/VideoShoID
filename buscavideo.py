@@ -346,22 +346,24 @@ async def mostrar_historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
-    conn = get_conn_pg()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, username, video_id, requested_at, status FROM pending_requests ORDER BY requested_at ASC")
-    rows = cur.fetchall()
-    conn.close()
+    # Executa a consulta em thread separada
+    rows = await asyncio.to_thread(
+        buscar_todos_do_banco,
+        "SELECT user_id, username, video_id, requested_at, status "
+        "FROM pending_requests ORDER BY requested_at ASC"
+    )
 
     if not rows:
         await update.message.reply_text("📭 Nenhum pedido encontrado!")
         return
 
-    resposta = "📚 *Histórico de todos os pedidos:*\n\n"
-    for i, (user_id, username, video_id, requested_at, status) in enumerate(rows, 1):
-        resposta += f"*{i}.* 👤 {username} (`{user_id}`)\n"
-        resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}` — 📄 *{status}*\n\n"
+    resposta = ["📚 *Histórico de todos os pedidos:*",""]
+    for i, row in enumerate(rows, 1):
+        resposta.append(f"*{i}.* 👤 {row['username']} (`{row['user_id']}`)")
+        resposta.append(f"🆔 `{row['video_id']}` — 🕒 `{row['requested_at']}` — 📄 *{row['status']}*")
+        resposta.append("")
 
-    await update.message.reply_text(resposta, parse_mode="Markdown")
+    await update.message.reply_text("\n".join(resposta), parse_mode="Markdown")
 
 # Mostrar apenas pedidos concluídos
 async def mostrar_concluidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -369,22 +371,24 @@ async def mostrar_concluidos(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
-    conn = get_conn_pg()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, username, video_id, requested_at FROM pending_requests WHERE status = 'concluido' ORDER BY requested_at ASC")
-    rows = cur.fetchall()
-    conn.close()
+    # busca em outra thread usando nossa função auxiliar
+    rows = await asyncio.to_thread(
+        buscar_todos_do_banco,
+        "SELECT user_id, username, video_id, requested_at "
+        "FROM pending_requests WHERE status = 'concluido' ORDER BY requested_at ASC"
+    )
 
     if not rows:
         await update.message.reply_text("📭 Nenhum pedido concluído!")
         return
 
-    resposta = "✅ *Pedidos concluídos:*\n\n"
-    for i, (user_id, username, video_id, requested_at) in enumerate(rows, 1):
-        resposta += f"*{i}.* 👤 {username} (`{user_id}`)\n"
-        resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}`\n\n"
+    resposta = ["✅ *Pedidos concluídos:*", ""]
+    for i, row in enumerate(rows, 1):
+        resposta.append(f"*{i}.* 👤 {row['username']} (`{row['user_id']}`)")
+        resposta.append(f"🆔 `{row['video_id']}` — 🕒 `{row['requested_at']}`")
+        resposta.append("")
 
-    await update.message.reply_text(resposta, parse_mode="Markdown")
+    await update.message.reply_text("\n".join(resposta), parse_mode="Markdown")
 
 # Mostrar apenas pedidos rejeitados
 async def mostrar_rejeitados(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -392,51 +396,53 @@ async def mostrar_rejeitados(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Você não tem permissão.")
         return
 
-    conn = get_conn_pg()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, username, video_id, requested_at FROM pending_requests WHERE status = 'rejeitado' ORDER BY requested_at ASC")
-    rows = cur.fetchall()
-    conn.close()
+    # busca em outra thread usando nossa função auxiliar
+    rows = await asyncio.to_thread(
+        buscar_todos_do_banco,
+        "SELECT user_id, username, video_id, requested_at "
+        "FROM pending_requests WHERE status = 'rejeitado' ORDER BY requested_at ASC"
+    )
 
     if not rows:
         await update.message.reply_text("📭 Nenhum pedido rejeitado!")
         return
 
-    resposta = "❌ *Pedidos rejeitados:*\n\n"
-    for i, (user_id, username, video_id, requested_at) in enumerate(rows, 1):
-        resposta += f"*{i}.* 👤 {username} (`{user_id}`)\n"
-        resposta += f"🆔 `{video_id}` — 🕒 `{requested_at}`\n\n"
+    resposta = ["❌ *Pedidos rejeitados:*", ""]
+    for i, row in enumerate(rows, 1):
+        resposta.append(f"*{i}.* 👤 {row['username']} (`{row['user_id']}`)")
+        resposta.append(f"🆔 `{row['video_id']}` — 🕒 `{row['requested_at']}`")
+        resposta.append("")
 
-    await update.message.reply_text(resposta, parse_mode="Markdown")
+    await update.message.reply_text("\n".join(resposta), parse_mode="Markdown")
 
 
 async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     user = update.effective_user
     user_id = user.id
 
-    conn = get_conn_pg()
-    cur = conn.cursor()
-
-    cur.execute("""
+    # roda a consulta em outra thread usando nossa função auxiliar
+    pedidos = await asyncio.to_thread(
+        buscar_todos_do_banco,
+        """
         SELECT video_id, requested_at, status 
         FROM pending_requests 
         WHERE user_id = %s
         ORDER BY requested_at DESC
-    """, (user_id,))
-
-    pedidos = cur.fetchall()
-    conn.close()
+        """,
+        (user_id,)
+    )
 
     if not pedidos:
         await update.message.reply_text("📭 Você ainda não tem pedidos registrados.")
         return
 
-    resposta = "📄 *Seus pedidos anteriores:*\n\n"
-    for i, (video_id, requested_at, status) in enumerate(pedidos, 1):
-        resposta += f"*{i}.* 🆔 `{video_id}` | 🕒 `{requested_at}` | 📌 *{status}*\n"
+    resposta = ["📄 *Seus pedidos anteriores:*", ""]
+    for i, row in enumerate(pedidos, 1):
+        resposta.append(
+            f"*{i}.* 🆔 `{row['video_id']}` | 🕒 `{row['requested_at']}` | 📌 *{row['status']}*"
+        )
 
-    await update.message.reply_text(resposta, parse_mode="Markdown")
+    await update.message.reply_text("\n".join(resposta), parse_mode="Markdown")
 
 
 # 2) Use só essa função para os dois passos:
@@ -456,15 +462,11 @@ async def consultar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return WAITING_FOR_QUEM
 
-    # 3) Aqui cai tanto se veio em context.args quanto se veio pelo MessageHandler
-    conn = get_conn_pg()
-    cur = conn.cursor()
-    cur.execute(
+    resultado = await asyncio.to_thread(
+        buscar_um_do_banco,
         "SELECT user_id, username FROM pending_requests WHERE video_id = %s",
         (video_id,)
     )
-    resultado = cur.fetchone()
-    conn.close()
 
     if not resultado:
         await update.message.reply_text("❌ Nenhum pedido encontrado com esse ID.")
@@ -573,12 +575,12 @@ async def mostrar_total_pedidos(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("❌ Você não tem permissão para usar este comando.")
         return
 
-    # Conecta ao banco e conta todos os pedidos
-    conn = get_conn_pg()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM pending_requests")
-    total = cur.fetchone()[0]
-    conn.close()
+    # Roda a contagem em thread separada
+    resultado = await asyncio.to_thread(
+        buscar_um_do_banco,
+        "SELECT COUNT(*) AS total FROM pending_requests"
+    )
+    total = resultado["total"] if resultado else 0
 
     await update.message.reply_text(f"📊 Total de pedidos registrados no banco: {total}")
 
@@ -619,7 +621,7 @@ async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.message.reply_text("❌ ID inválido. Passe um número de usuário válido.")
 
         # 3) insere no DB e na lista em memória
-        inserir_admin_db(novo_id)
+        await asyncio.to_thread(inserir_admin_db, novo_id)
         if novo_id not in ADMIN_IDS:
             ADMIN_IDS.append(novo_id)
 
