@@ -1,8 +1,8 @@
-import os
 import sys
-import logging
 import psycopg2.extras
 import re
+import os
+import logging
 import asyncio
 from dotenv import load_dotenv
 from telegram import BotCommand, BotCommandScopeDefault, Update, InputFile
@@ -56,10 +56,18 @@ def get_conn_pg():
     )
 
 
-# Senha para acessar comandos avançados (só admins sabem)
-ADMIN_PASSWORD = 5590
-ADMIN_IDS = [6294708048]  # adicione aqui todos os user_id dos seus admins
-CANAL_ID = -1002563145936
+ # Senha para acessar comandos avançados (só admins sabem)
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
+if ADMIN_IDS_STR:
+    try:
+        ADMIN_IDS = [int(x.strip()) for x in ADMIN_IDS_STR.split(',') if x.strip()]
+    except ValueError:
+        logger.error("ADMIN_IDS deve conter apenas números separados por vírgula.")
+        ADMIN_IDS = []
+else:
+    ADMIN_IDS = []
+TELEGRAM_CHAT_ID = (os.getenv("CANAL_ID"))
 
 def buscar_todos_do_banco(query: str, params: tuple = ()):
     """
@@ -247,7 +255,7 @@ async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user, vid, m
         texto += f"🆔 Pedido: {vid}\n"
         texto += f"🔗 [Ver mensagem]({link_mensagem})\n"
 
-        await context.bot.send_message(chat_id=CANAL_ID, text=texto, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=texto, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Erro ao enviar notificação para o canal: {e}")
 
@@ -448,39 +456,49 @@ async def mostrar_meus_pedidos(update: Update, context: ContextTypes.DEFAULT_TYP
 # 2) Use só essa função para os dois passos:
 async def consultar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    # 2.1) Só admin pode usar
-    if not context.user_data.get("is_admin"):
-        return await update.message.reply_text("❌ Você não tem permissão.")
 
-    # 2.2) Se veio com argumento, processa
+    # 1) Só admin pode usar
+    if not context.user_data.get("is_admin"):
+        await update.message.reply_text("❌ Você não tem permissão.")
+        return ConversationHandler.END
+
+    # 2) Tratamento de argumentos
     if context.args:
+        if len(context.args) != 1:
+            await update.message.reply_text("❌ Use: /consultar_pedido <ID_do_vídeo>")
+            return ConversationHandler.END
+
         video_id = context.args[0].strip().upper()
-    # 2.3) Se não, é porque acabamos de chamar "/quem_pediu" — pedimos o ID
+
+    # 3) Fluxo de conversa (caso venha sem argumento)
     else:
         await update.message.reply_text(
             "🔍 Diga o ID do vídeo e eu te mostro quem pediu (se existir):"
         )
         return WAITING_FOR_QUEM
 
+    # 4) Busca no banco
     resultado = await asyncio.to_thread(
         buscar_um_do_banco,
         "SELECT user_id, username FROM pending_requests WHERE video_id = %s",
         (video_id,)
     )
 
+    # 5) Resposta
     if not resultado:
         await update.message.reply_text("❌ Nenhum pedido encontrado com esse ID.")
     else:
-        user_id, username = resultado
+        user_id = resultado["user_id"]
+        username = resultado["username"] or "Desconhecido"
         await update.message.reply_text(
             f"🔍 *Informações do pedido*\n"
             f"📽️ ID do vídeo: `{video_id}`\n"
             f"👤 User ID: `{user_id}`\n"
-            f"📝 Nome de usuário: `{username or 'Desconhecido'}`",
+            f"📝 Nome de usuário: `{username}`",
             parse_mode="Markdown"
         )
 
-    # 4) Limpa o fluxo de conversa (se veio por ele)
+    # 6) Encerra o fluxo, caso tenha sido iniciado por conversa
     return ConversationHandler.END
 
 # ————— Cancelar conversa —————
@@ -503,6 +521,7 @@ async def setup_commands(app):
         logger.exception("Erro ao configurar comandos")
 
 def init_db():
+    conn = None
     try:
         conn = get_conn_pg()
         cur = conn.cursor()
@@ -522,7 +541,7 @@ def init_db():
             '''CREATE TABLE IF NOT EXISTS request_log (
                 id SERIAL PRIMARY KEY,
                 vid TEXT,
-                user TEXT,
+                username TEXT,
                 ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )'''
         )
@@ -540,7 +559,9 @@ def init_db():
     except Exception:
         logger.exception("Erro ao inicializar o banco de dados")
     finally:
-        conn.close()
+        if conn:
+            conn.close()
+
 
 async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Aqui está como encontrar o ID. Siga os passos abaixo:")
@@ -631,7 +652,13 @@ async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ————— Ponto de entrada —————
 if __name__ == "__main__":
     init_db()
-    # carrega do DB
+    conn = get_conn_pg()
+    if conn:
+        print("Conexão com o banco de dados bem-sucedida!")
+        conn.close()
+    else:
+        print("Falha na conexão com o banco de dados.")
+
     dynamic_admins = load_admins_from_db()
     # mescla com os admins fixos que você colocava manualmente
     ADMIN_IDS = list(set(ADMIN_IDS + dynamic_admins))
