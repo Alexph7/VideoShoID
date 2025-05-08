@@ -167,6 +167,18 @@ def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente"
     except Exception as e:
         logger.error(f"Erro ao salvar pedido pendente: {e}")
 
+# Mensagem de Mural de Entrada
+async def configurar_mural(app):
+    await app.bot.set_my_description(
+        description=(
+            "Olá, Bem-Vindo! 🤖\n\n"
+            "Sou um bot desenvolvido por t.me/cupomnavitrine, "
+            "estou aqui para te ajudar a criar seu vídeo com o produto da Shopee."
+        )
+    )
+    await app.bot.set_my_short_description(
+        short_description="Bot para criar vídeo de produto da Shopee 🎬"
+    )
 
 # Handler para /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -628,25 +640,28 @@ def inserir_admin_db(user_id: int):
 
 
 async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # 1) só admin pode usar
-        if not context.user_data.get("is_admin"):
-            return await update.message.reply_text("❌ Você não tem permissão para isso.")
+    # 1) só admin pode usar
+    if not context.user_data.get("is_admin"):
+        return await update.message.reply_text("❌ Você não tem permissão para isso.")
 
-        # 2) pega o argumento
-        if not context.args:
-            return await update.message.reply_text("Use: /addadmin <user_id>")
+    # 2) pega o argumento
+    if not context.args:
+        return await update.message.reply_text("Use: /addadmin <user_id>")
 
-        try:
-            novo_id = int(context.args[0])
-        except ValueError:
-            return await update.message.reply_text("❌ ID inválido. Passe um número de usuário válido.")
+    try:
+        novo_id = int(context.args[0])
+    except ValueError:
+        return await update.message.reply_text("❌ ID inválido. Passe um número de usuário válido.")
 
-        # 3) insere no DB e na lista em memória
-        await asyncio.to_thread(inserir_admin_db, novo_id)
-        if novo_id not in ADMIN_IDS:
-            ADMIN_IDS.append(novo_id)
+    # 3) checa se já é admin
+    if novo_id in ADMIN_IDS:
+        return await update.message.reply_text("⚠️ Esse usuário já é admin.")
 
-        await update.message.reply_text(f"✅ Usuário `{novo_id}` adicionado como admin.", parse_mode="Markdown")
+    # 4) insere no DB e na lista em memória
+    await asyncio.to_thread(inserir_admin_db, novo_id)
+    ADMIN_IDS.append(novo_id)
+
+    await update.message.reply_text(f"✅ Usuário `{novo_id}` adicionado como admin.", parse_mode="Markdown")
 
 
 # ————— Ponto de entrada —————
@@ -666,6 +681,7 @@ if __name__ == "__main__":
     app = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
+        .post_init(configurar_mural)
         .post_init(setup_commands)
         .build()
     )
