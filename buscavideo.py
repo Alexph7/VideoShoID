@@ -168,17 +168,25 @@ def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente"
         logger.error(f"Erro ao salvar pedido pendente: {e}")
 
 # Mensagem de Mural de Entrada
-async def configurar_mural(app):
+async def setup_bot_description(app):
+    # descrição curta (topo da conversa)
+    await app.bot.set_my_short_description(
+        short_description=(
+            "🤖 Olá! Sou o bot do @cupomnavitrine – "
+            "envie um ID e eu busco o vídeo pra você."
+        ),
+        language_code="pt"
+    )
+    # descrição longa (na página do bot)
     await app.bot.set_my_description(
         description=(
-            "Olá, Bem-Vindo! 🤖\n\n"
-            "Sou um bot desenvolvido por t.me/cupomnavitrine, "
-            "estou aqui para te ajudar a criar seu vídeo com o produto da Shopee."
-        )
+            "🤖 Olá! Sou o bot do @cupomnavitrine – "
+            "vou te ajudar a buscar vídeos da shopee pra você por IDs. "
+            "Se não existir ainda, coloco na fila e aviso quando estiver disponível. 👌"
+        ),
+        language_code="pt"
     )
-    await app.bot.set_my_short_description(
-        short_description="Bot para criar vídeo de produto da Shopee 🎬"
-    )
+    logger.info("Descrições do bot definidas com sucesso.")
 
 # Handler para /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -681,7 +689,7 @@ if __name__ == "__main__":
     app = (
         ApplicationBuilder()
         .token(BOT_TOKEN)
-        .post_init(configurar_mural)
+        .post_init(setup_bot_description)
         .post_init(setup_commands)
         .build()
     )
