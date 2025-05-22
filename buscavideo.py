@@ -3,10 +3,9 @@ import psycopg2.extras
 import re
 import os
 import logging
+from telegram import BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
 import asyncio
 from dotenv import load_dotenv
-from telegram.ext import ConversationHandler, MessageHandler, filters, CommandHandler, ContextTypes
-from telegram import Update
 from telegram import BotCommand, BotCommandScopeDefault, Update, InputFile
 from telegram.ext import (
     ApplicationBuilder,
@@ -524,18 +523,24 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ————— Configura comandos —————
 async def setup_commands(app):
-    try:
-        await app.bot.set_my_commands(
-            [
-                BotCommand("start", "Iniciar conversa"),
-                BotCommand("meus_pedidos", "Veja seu historico"),
-                BotCommand("ajuda", "Como encontrar o ID na Shopee"),
-            ],
-            scope=BotCommandScopeDefault()
-        )
-        logger.info("Comandos configurados.")
-    except Exception:
-        logger.exception("Erro ao configurar comandos")
+    # comandos só para chats privados
+    private_cmds = [
+        BotCommand("start", "Iniciar conversa"),
+        BotCommand("meus_pedidos", "Veja seu histórico"),
+        BotCommand("ajuda", "Como encontrar o ID na Shopee"),
+    ]
+    await app.bot.set_my_commands(
+        private_cmds,
+        scope=BotCommandScopeAllPrivateChats()
+    )
+
+    # remove todas sugestões de comandos em grupos e supergrupos
+    await app.bot.set_my_commands(
+        [],
+        scope=BotCommandScopeAllGroupChats()
+    )
+
+    logger.info("Comandos configurados: só aparecem em chats privados.")
 
 def init_db():
     conn = None
@@ -694,10 +699,10 @@ if __name__ == "__main__":
     # Conversation handler principal, incluindo /adicionar e menu admin
     main_conv = ConversationHandler(
         entry_points=[
-            CommandHandler("start", start),
-            CommandHandler("admin", iniciar_admin),
-            CommandHandler("ajuda", ajuda),
-            CommandHandler("meus_pedidos", mostrar_meus_pedidos),
+            CommandHandler("start", start, filters=filters.ChatType.PRIVATE),
+            CommandHandler("admin", iniciar_admin, filters=filters.ChatType.PRIVATE),
+            CommandHandler("ajuda", ajuda, filters=filters.ChatType.PRIVATE),
+            CommandHandler("meus_pedidos", mostrar_meus_pedidos, filters=filters.ChatType.PRIVATE),
         ],
         states={
             AGUARDANDO_SENHA: [
