@@ -60,6 +60,7 @@ def get_conn_pg():
 
  # Senha para acessar comandos avançados (só admins sabem)
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+TELEGRAM_CHAT_ID = os.getenv("CANAL_ID")
 ADMIN_IDS_STR = os.getenv("ADMIN_IDS", "")
 if ADMIN_IDS_STR:
     try:
@@ -69,6 +70,7 @@ if ADMIN_IDS_STR:
         ADMIN_IDS = []
 else:
     ADMIN_IDS = []
+
 
 def buscar_todos_do_banco(query: str, params: tuple = ()):
     """
@@ -264,31 +266,21 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # ————— Funções de notificação —————
-async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user,vid: str, chat_id: int, message_id: int):
+async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user, vid, message):
     try:
-        chat_id_str = str(chat_id)
-        # se for grupo/channel privado, chat_id começa com -100xxx
+        chat_id_str = str(message.chat.id)
+        msg_id_str = str(message.message_id)
         internal_chat_id = chat_id_str[4:] if chat_id_str.startswith("-100") else None
-        link_mensagem = (
-            f"https://t.me/c/{internal_chat_id}/{message_id}"
-            if internal_chat_id
-            else "🔒 (Chat privado)"
-        )
-        texto = (
-            "📨 *Novo pedido de ID*\n"
-            f"👤 Usuário: {user.username or user.first_name or 'Usuário desconhecido'} "
-            f"(ID: `{user.id}`)\n"
-            f"🆔 Pedido: `{vid}`\n"
-            f"🔗 [Ver mensagem original]({link_mensagem})"
-        )
+        link_mensagem = f"https://t.me/c/{internal_chat_id}/{msg_id_str}" if internal_chat_id else "🔒 (Chat privado)"
 
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=texto,
-            parse_mode="Markdown"
-        )
+        texto = f"📨 Novo pedido de ID\n"
+        texto += f"👤 Usuário: {user.username or user.first_name or 'Usuário desconhecido'} (ID: {user.id})\n"
+        texto += f"🆔 Pedido: {vid}\n"
+        texto += f"🔗 [Ver mensagem]({link_mensagem})\n"
+
+        await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=texto, parse_mode="Markdown")
     except Exception as e:
-        logger.error(f"Erro ao enviar notificação no grupo: {e}")
+        logger.error(f"Erro ao enviar notificação para o canal: {e}")
 
 
 async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
