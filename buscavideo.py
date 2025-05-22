@@ -5,6 +5,8 @@ import os
 import logging
 import asyncio
 from dotenv import load_dotenv
+from telegram.ext import ConversationHandler, MessageHandler, filters, CommandHandler, ContextTypes
+from telegram import Update
 from telegram import BotCommand, BotCommandScopeDefault, Update, InputFile
 from telegram.ext import (
     ApplicationBuilder,
@@ -67,7 +69,6 @@ if ADMIN_IDS_STR:
         ADMIN_IDS = []
 else:
     ADMIN_IDS = []
-TELEGRAM_CHAT_ID = (os.getenv("CANAL_ID"))
 
 def buscar_todos_do_banco(query: str, params: tuple = ()):
     """
@@ -107,7 +108,7 @@ ADMIN_MENU = (
 )
 
 # Regex para validar ID
-ID_PATTERN = re.compile(r'^[A-Za-z0-9]{3}-[A-Za-z0-9]{3}-[A-Za-z0-9]{3}$')
+ID_PATTERN = re.compile(r'^[A-Za-z]{3}-[A-Za-z]{3}-[A-Za-z]{3}$')
 
 # ————— Funções de banco —————
 
@@ -191,7 +192,7 @@ async def setup_bot_description(app):
 # Handler para /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🔎 Olá para começar, você pode acionar a qualquer momento o comando /busca_id clicando em cima dele ou no menu lateral"
+        "🔎 Olá para começar, digite o ID do produto da shopee no formato AAA-BBB-CCC"
     )
 
 async def iniciar_adicionar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -263,28 +264,32 @@ async def receber_link_produto(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # ————— Funções de notificação —————
-async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user, vid, message):
+async def notificar_canal_admin(context: ContextTypes.DEFAULT_TYPE, user,vid: str, chat_id: int, message_id: int):
     try:
-        chat_id_str = str(message.chat.id)
-        msg_id_str = str(message.message_id)
+        chat_id_str = str(chat_id)
+        # se for grupo/channel privado, chat_id começa com -100xxx
         internal_chat_id = chat_id_str[4:] if chat_id_str.startswith("-100") else None
-        link_mensagem = f"https://t.me/c/{internal_chat_id}/{msg_id_str}" if internal_chat_id else "🔒 (Chat privado)"
+        link_mensagem = (
+            f"https://t.me/c/{internal_chat_id}/{message_id}"
+            if internal_chat_id
+            else "🔒 (Chat privado)"
+        )
+        texto = (
+            "📨 *Novo pedido de ID*\n"
+            f"👤 Usuário: {user.username or user.first_name or 'Usuário desconhecido'} "
+            f"(ID: `{user.id}`)\n"
+            f"🆔 Pedido: `{vid}`\n"
+            f"🔗 [Ver mensagem original]({link_mensagem})"
+        )
 
-        texto = f"📨 Novo pedido de ID\n"
-        texto += f"👤 Usuário: {user.username or user.first_name or 'Usuário desconhecido'} (ID: {user.id})\n"
-        texto += f"🆔 Pedido: {vid}\n"
-        texto += f"🔗 [Ver mensagem]({link_mensagem})\n"
-
-        await context.bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=texto, parse_mode="Markdown")
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=texto,
+            parse_mode="Markdown"
+        )
     except Exception as e:
-        logger.error(f"Erro ao enviar notificação para o canal: {e}")
+        logger.error(f"Erro ao enviar notificação no grupo: {e}")
 
-# ————— Conversa /busca_id —————
-async def iniciar_busca_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Digite o ID no formato 123-ABC-X1Z ou se não souber como encontrar clique em /ajuda"
-    )
-    return WAITING_FOR_ID
 
 async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     vid = update.message.text.strip().upper()
@@ -530,7 +535,7 @@ async def setup_commands(app):
     try:
         await app.bot.set_my_commands(
             [
-                BotCommand("busca_id", "Buscar vídeo por ID"),
+                BotCommand("start", "Iniciar conversa"),
                 BotCommand("meus_pedidos", "Veja seu historico"),
                 BotCommand("ajuda", "Como encontrar o ID na Shopee"),
             ],
@@ -606,7 +611,7 @@ async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id,
                 photo=InputFile(img2),
-                caption="📌 Passo 2: Copie o ID mostrado no Formato indicado. \n\n 👉~Acione o comando /busca_id e cole o código"
+                caption="📌 Passo 2: Copie o ID mostrado no Formato indicado e cole o código no bot."
             )
 
 
@@ -698,16 +703,11 @@ if __name__ == "__main__":
     main_conv = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            CommandHandler("busca_id", iniciar_busca_id),
             CommandHandler("admin", iniciar_admin),
             CommandHandler("ajuda", ajuda),
             CommandHandler("meus_pedidos", mostrar_meus_pedidos),
         ],
         states={
-            WAITING_FOR_ID: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, tratar_id),
-                CommandHandler("busca_id", iniciar_busca_id),
-            ],
             AGUARDANDO_SENHA: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, tratar_senha),
                 CommandHandler("admin", iniciar_admin),
@@ -741,6 +741,13 @@ if __name__ == "__main__":
         CommandHandler("total_pedidos", mostrar_total_pedidos),
         CommandHandler("addadmin", add_admin)
     ]
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.Regex(ID_PATTERN),
+            tratar_id
+        )
+    )
     for handler in admin_handlers:
         app.add_handler(handler)
     app.run_polling()
