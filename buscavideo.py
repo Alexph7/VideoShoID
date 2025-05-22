@@ -153,17 +153,25 @@ def buscar_link_por_id(vid):
             return row["link"] if row else None
 
 
-def salvar_pedido_pendente(usuario_id, nome_usuario, video_id, status="pendente"):
+def salvar_pedido_pendente(usuario_id, username, first_name, video_id, status="pendente"):
+    """
+       Grava na tabela pending_requests:
+         - usuario_id: int
+         - username: str ("" se não tiver)
+         - first_name: str (nome legível)
+         - video_id: str
+         - status: 'pendente' | 'encontrado' | etc.
+       """
     try:
         with get_conn_pg() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO pending_requests 
-                      (user_id, username, video_id, status) 
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO pending_requests
+                      (user_id, username, first_name, video_id, status)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (usuario_id, nome_usuario, video_id, status)
+                    (usuario_id, username, first_name, video_id, status)
                 )
             conn.commit()
     except Exception as e:
@@ -293,19 +301,31 @@ async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 1) Tenta buscar link existente
     link = await executar_db(buscar_link_por_id, vid)
     user = update.effective_user
-    nome = user.username or user.first_name or "Usuário desconhecido"
+    # Prepara os campos de name
+    telegram_id = user.id
+    username = user.username or "Usuário desconhecido"
+    first_name = user.first_name or "(sem nome)"
 
     if link:
-        # 2a) Se existe, responde com o link e registra pedido como 'encontrado'
         await update.message.reply_text(f"🔗 Link encontrado: {link}")
+        # agora passando também o first_name
         await executar_db(
-            salvar_pedido_pendente,user.id,nome,vid,"encontrado"
+            salvar_pedido_pendente,
+            telegram_id,
+            username,
+            first_name,
+            vid,
+            "encontrado"
         )
     else:
-        # 2b) Se não existe, insere novo vídeo sem link e registra como 'pendente'
         await executar_db(inserir_video, vid)
         await executar_db(
-            salvar_pedido_pendente,user.id,nome,vid,"pendente"
+            salvar_pedido_pendente,
+            telegram_id,
+            username,
+            first_name,
+            vid,
+            "pendente"
         )
         await update.message.reply_text(
             "✅ ID adicionado à fila. Avisarei quando o link estiver disponível."
@@ -313,7 +333,6 @@ async def tratar_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await notificar_canal_admin(context, user, vid, update.message)
 
     return ConversationHandler.END
-
 
 async def iniciar_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -481,40 +500,46 @@ async def consultar_pedido(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 2) Tratamento de argumentos
     if context.args:
         if len(context.args) != 1:
-            await update.message.reply_text("❌ Use: /consultar_pedido <ID_do_vídeo>")
+            await update.message.reply_text("❌ Use: /consultar_pedido <ID_do-vídeo>")
             return ConversationHandler.END
 
         video_id = context.args[0].strip().upper()
-
-    # 3) Fluxo de conversa (caso venha sem argumento)
     else:
+        # 3) Fluxo de conversa (caso venha sem argumento)
         await update.message.reply_text(
             "🔍 Diga o ID do vídeo e eu te mostro quem pediu (se existir):"
         )
         return WAITING_FOR_QUEM
 
-    # 4) Busca no banco
-    resultado = await asyncio.to_thread(
-        buscar_um_do_banco,
-        "SELECT user_id, username FROM pending_requests WHERE video_id = %s",
+    # 4) Busca todos os pedidos daquele ID
+    resultados = await asyncio.to_thread(
+        buscar_todos_do_banco,
+        """
+        SELECT user_id, username, requested_at, status
+          FROM pending_requests
+         WHERE video_id = %s
+         ORDER BY requested_at ASC
+        """,
         (video_id,)
     )
 
-    # 5) Resposta
-    if not resultado:
+    # 5) Resposta para o admin
+    if not resultados:
         await update.message.reply_text("❌ Nenhum pedido encontrado com esse ID.")
     else:
-        user_id = resultado["user_id"]
-        username = resultado["username"] or "Desconhecido"
-        await update.message.reply_text(
-            f"🔍 *Informações do pedido*\n"
-            f"📽️ ID do vídeo: `{video_id}`\n"
-            f"👤 User ID: `{user_id}`\n"
-            f"📝 Nome de usuário: `{username}`",
-            parse_mode="Markdown"
-        )
+        linhas = [
+            "🔍 *Quem pediu esse ID:*",
+            f"📽️ `{video_id}`",
+            ""
+        ]
+        for i, r in enumerate(resultados, start=1):
+            linhas.append(
+                f"*{i}.* 👤 {r['username']} (`{r['user_id']}`) — "
+                f"🕒 `{r['requested_at']}` — *{r['status']}*"
+            )
+        await update.message.reply_text("\n".join(linhas), parse_mode="Markdown")
 
-    # 6) Encerra o fluxo, caso tenha sido iniciado por conversa
+    # 6) Encerra o fluxo
     return ConversationHandler.END
 
 # ————— Cancelar conversa —————
@@ -572,6 +597,7 @@ def init_db():
                 id SERIAL PRIMARY KEY,
                 user_id TEXT,
                 username TEXT,
+                first_name TEXT,
                 video_id TEXT,
                 requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status TEXT DEFAULT 'pendente'
